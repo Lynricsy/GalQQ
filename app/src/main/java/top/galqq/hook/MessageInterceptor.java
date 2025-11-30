@@ -1531,12 +1531,6 @@ public class MessageInterceptor {
                 // XposedBridge.log(TAG + ": [DEBUG] Hooked " + hookedCount + " methods in " + className);
             } catch (Throwable t) {
                 // 类不存在或其他错误，跳过
-                // String msg = t.getMessage();
-                // if (msg != null && msg.contains("ClassNotFound")) {
-                //     XposedBridge.log(TAG + ": [DEBUG] Class not found (skip): " + className);
-                // } else {
-                //     XposedBridge.log(TAG + ": [DEBUG] Failed to hook " + className + ": " + msg);
-                // }
             }
         }
     }
@@ -1589,5 +1583,6 @@ public class MessageInterceptor {
             XposedBridge.log(TAG + ": [DEBUG] Error logging method call: " + t.getMessage());
         }
         */
+        
     }
 }

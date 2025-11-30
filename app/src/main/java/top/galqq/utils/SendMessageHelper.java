@@ -46,8 +46,8 @@ public class SendMessageHelper {
     
     public static boolean sendTextMessage(Context context, String peerUid, String messageText) {
         try {
-            XposedBridge.log(TAG + ": 准备发送消息到 " + peerUid);
-            XposedBridge.log(TAG + ": 消息内容: " + messageText);
+            //XposedBridge.log(TAG + ": 准备发送消息到 " + peerUid);
+            //XposedBridge.log(TAG + ": 消息内容: " + messageText);
             
             ClassLoader classLoader = context.getClassLoader();
             
@@ -89,7 +89,7 @@ public class SendMessageHelper {
             sendMethod.setAccessible(true);
             sendMethod.invoke(vmDelegate, msgDataList, bundle, null, "");
             
-            XposedBridge.log(TAG + ": ✓ 消息发送成功！(Method: " + sendMethod.getName() + ")");
+            // XposedBridge.log(TAG + ": ✓ 消息发送成功！(Method: " + sendMethod.getName() + ")");
             return true;
             
         } catch (Throwable t) {
@@ -132,7 +132,7 @@ public class SendMessageHelper {
             XposedHelpers.setLongField(textElement, "atTinyId", 0L);
             XposedHelpers.setObjectField(textElement, "atNtUid", "");
             
-            XposedBridge.log(TAG + ": 创建TextElement成功: " + textElement);
+            // XposedBridge.log(TAG + ": 创建TextElement成功: " + textElement);
             return textElement;
             
         } catch (Throwable t) {
@@ -148,7 +148,7 @@ public class SendMessageHelper {
      * 自动降级策略：先尝试新版本，失败后回退到旧版本
      */
     private static Object createMsgDataWithTextAutoFallback(ClassLoader classLoader, Object textElement) {
-        XposedBridge.log(TAG + ": [自动降级] 开始创建消息数据");
+        //XposedBridge.log(TAG + ": [自动降级] 开始创建消息数据");
         
         // 提取 TextElement 字段
         String content = (String) XposedHelpers.getObjectField(textElement, "content");
@@ -157,8 +157,8 @@ public class SendMessageHelper {
         long atTinyId = XposedHelpers.getLongField(textElement, "atTinyId");
         String atNtUid = (String) XposedHelpers.getObjectField(textElement, "atNtUid");
         
-        XposedBridge.log(TAG + ": TextElement字段: content=" + content + ", atType=" + atType + 
-            ", atUid=" + atUid + ", atTinyId=" + atTinyId + ", atNtUid=" + atNtUid);
+        //XposedBridge.log(TAG + ": TextElement字段: content=" + content + ", atType=" + atType + 
+        //    ", atUid=" + atUid + ", atTinyId=" + atTinyId + ", atNtUid=" + atNtUid);
         
         // 创建 msg.data.a 实例
         Object msgData = createMsgDataInstance(classLoader);
@@ -172,10 +172,10 @@ public class SendMessageHelper {
             try {
                 XposedHelpers.setIntField(msgData, "a", 1);
                 XposedHelpers.setObjectField(msgData, "b", element);
-                XposedBridge.log(TAG + ": [策略1-新版本$i] 成功设置 msgData.a=1, msgData.b=AIOElementType$i");
+                // XposedBridge.log(TAG + ": [策略1-新版本$i] 成功设置 msgData.a=1, msgData.b=AIOElementType$i");
                 return msgData;
             } catch (Throwable t) {
-                XposedBridge.log(TAG + ": [策略1] 设置字段失败: " + t.getMessage());
+                //XposedBridge.log(TAG + ": [策略1] 设置字段失败: " + t.getMessage());
             }
         }
         
@@ -186,10 +186,24 @@ public class SendMessageHelper {
                 XposedHelpers.setIntField(msgData, "a", 1);
                 XposedHelpers.setIntField(msgData, "b", 0);
                 XposedHelpers.setObjectField(msgData, "c", element);
-                XposedBridge.log(TAG + ": [策略2-旧版本$h] 成功设置 msgData.a=1, msgData.b=0, msgData.c=AIOElementType$h");
+                // XposedBridge.log(TAG + ": [策略2-旧版本$h] 成功设置 msgData.a=1, msgData.b=0, msgData.c=AIOElementType$h");
                 return msgData;
             } catch (Throwable t) {
-                XposedBridge.log(TAG + ": [策略2] 设置字段失败: " + t.getMessage());
+                //XposedBridge.log(TAG + ": [策略2] 设置字段失败: " + t.getMessage());
+            }
+        }
+        
+        // 策略3: 尝试 AIOElementType$i 设置到字段 c (QQ 9.2.25 版本)
+        // 在这个版本中，msgData.b 是 int 类型，msgData.c 是 AIOElementType$i 类型
+        element = tryCreateAIOElementTypeI(classLoader, content, atType, atUid, atTinyId, atNtUid);
+        if (element != null) {
+            try {
+                XposedHelpers.setIntField(msgData, "a", 1);
+                XposedHelpers.setObjectField(msgData, "c", element);
+                // XposedBridge.log(TAG + ": [策略3-9.2.25版本] 成功设置 msgData.a=1, msgData.c=AIOElementType$i");
+                return msgData;
+            } catch (Throwable t) {
+                //XposedBridge.log(TAG + ": [策略3] 设置字段失败: " + t.getMessage());
             }
         }
         
@@ -207,11 +221,11 @@ public class SendMessageHelper {
                 "com.tencent.qqnt.aio.msg.element.AIOElementType$i", classLoader);
             
             Constructor<?>[] constructors = iClass.getDeclaredConstructors();
-            XposedBridge.log(TAG + ": AIOElementType$i 有 " + constructors.length + " 个构造函数");
+            //XposedBridge.log(TAG + ": AIOElementType$i 有 " + constructors.length + " 个构造函数");
             
             for (int i = 0; i < constructors.length; i++) {
                 Class<?>[] paramTypes = constructors[i].getParameterTypes();
-                XposedBridge.log(TAG + ":   构造函数[" + i + "]: " + Arrays.toString(paramTypes));
+                //XposedBridge.log(TAG + ":   构造函数[" + i + "]: " + Arrays.toString(paramTypes));
             }
             
             // 按优先级尝试不同构造函数
@@ -220,7 +234,7 @@ public class SendMessageHelper {
                 Class<?>[] paramTypes = constructor.getParameterTypes();
                 Object result = tryInvokeConstructor(constructor, paramTypes, content, atType, atUid, atTinyId, atNtUid);
                 if (result != null) {
-                    XposedBridge.log(TAG + ": 创建AIOElementType$i成功: " + result);
+                    // XposedBridge.log(TAG + ": 创建AIOElementType$i成功: " + result);
                     return result;
                 }
             }
@@ -242,11 +256,11 @@ public class SendMessageHelper {
                 "com.tencent.qqnt.aio.msg.element.AIOElementType$h", classLoader);
             
             Constructor<?>[] constructors = hClass.getDeclaredConstructors();
-            XposedBridge.log(TAG + ": AIOElementType$h 有 " + constructors.length + " 个构造函数");
+            //XposedBridge.log(TAG + ": AIOElementType$h 有 " + constructors.length + " 个构造函数");
             
             for (int i = 0; i < constructors.length; i++) {
                 Class<?>[] paramTypes = constructors[i].getParameterTypes();
-                XposedBridge.log(TAG + ":   构造函数[" + i + "]: " + Arrays.toString(paramTypes));
+                //XposedBridge.log(TAG + ":   构造函数[" + i + "]: " + Arrays.toString(paramTypes));
             }
             
             // 按优先级尝试不同构造函数
@@ -255,7 +269,7 @@ public class SendMessageHelper {
                 Class<?>[] paramTypes = constructor.getParameterTypes();
                 Object result = tryInvokeConstructor(constructor, paramTypes, content, atType, atUid, atTinyId, atNtUid);
                 if (result != null) {
-                    XposedBridge.log(TAG + ": 创建AIOElementType$h成功: " + result);
+                    // XposedBridge.log(TAG + ": 创建AIOElementType$h成功: " + result);
                     return result;
                 }
             }
@@ -274,14 +288,14 @@ public class SendMessageHelper {
             String content, int atType, long atUid, long atTinyId, String atNtUid) {
         try {
             int len = paramTypes.length;
-            XposedBridge.log(TAG + ": 尝试调用 " + len + " 参数构造函数");
+            //XposedBridge.log(TAG + ": 尝试调用 " + len + " 参数构造函数");
             
             if (len == 0) {
                 // 无参构造函数
                 Object obj = constructor.newInstance();
                 // 尝试设置字段
                 trySetAllFields(obj, content, atType, atUid, atTinyId, atNtUid);
-                XposedBridge.log(TAG + ": 无参构造函数成功，已设置字段");
+                // XposedBridge.log(TAG + ": 无参构造函数成功，已设置字段");
                 return obj;
             }
             
@@ -295,12 +309,12 @@ public class SendMessageHelper {
                 // (long, long, String, String) - 根据日志
                 if (paramTypes[0] == long.class && paramTypes[1] == long.class 
                     && paramTypes[2] == String.class && paramTypes[3] == String.class) {
-                    XposedBridge.log(TAG + ": 匹配4参数构造函数 (long, long, String, String)");
+                    //XposedBridge.log(TAG + ": 匹配4参数构造函数 (long, long, String, String)");
                     return constructor.newInstance(atUid, atTinyId, content, atNtUid);
                 }
                 // (String, int, long, long) - 另一种可能
                 if (paramTypes[0] == String.class && paramTypes[1] == int.class) {
-                    XposedBridge.log(TAG + ": 匹配4参数构造函数 (String, int, long, long)");
+                    //XposedBridge.log(TAG + ": 匹配4参数构造函数 (String, int, long, long)");
                     return constructor.newInstance(content, atType, atUid, atTinyId);
                 }
             }
@@ -308,7 +322,7 @@ public class SendMessageHelper {
             if (len == 5) {
                 // (String, int, long, long, String)
                 if (paramTypes[0] == String.class && paramTypes[1] == int.class) {
-                    XposedBridge.log(TAG + ": 匹配5参数构造函数 (String, int, long, long, String)");
+                    //XposedBridge.log(TAG + ": 匹配5参数构造函数 (String, int, long, long, String)");
                     return constructor.newInstance(content, atType, atUid, atTinyId, atNtUid);
                 }
             }
@@ -333,7 +347,7 @@ public class SendMessageHelper {
                 }
             }
             
-            XposedBridge.log(TAG + ": 通用填充参数: " + Arrays.toString(args));
+            //XposedBridge.log(TAG + ": 通用填充参数: " + Arrays.toString(args));
             return constructor.newInstance(args);
             
         } catch (Throwable t) {
@@ -413,7 +427,7 @@ public class SendMessageHelper {
                     }
                     
                     Object msgData = constructor.newInstance(params);
-                    XposedBridge.log(TAG + ": 创建msg.data.a成功 (" + paramTypes.length + "参数)");
+                    // XposedBridge.log(TAG + ": 创建msg.data.a成功 (" + paramTypes.length + "参数)");
                     return msgData;
                 } catch (Throwable t) {
                     XposedBridge.log(TAG + ": 构造函数失败: " + t.getMessage());
