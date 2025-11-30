@@ -10,8 +10,8 @@ android {
         applicationId "top.galqq"
         minSdk 26
         targetSdk 34
-        versionCode 101
-        versionName "1.0.1"
+        versionCode 102
+        versionName "1.0.2"
     }
 
     buildTypes {
@@ -24,7 +24,7 @@ android {
         sourceCompatibility JavaVersion.VERSION_1_8
         targetCompatibility JavaVersion.VERSION_1_8
     }
-    
+
     // 关键配置：使用自定义包ID 0x7e，避免与QQ的0x7f和QAuxiliary的0x39冲突
     androidResources {
         additionalParameters += ['--allow-reserved-package-id', '--package-id', '0x7e']
@@ -34,7 +34,7 @@ android {
 dependencies {
     // QQ stub library (compile-time only)
     compileOnly project(':libs:stub')
-    
+
     compileOnly 'de.robv.android.xposed:api:82'
     implementation 'org.luckypray:dexkit:2.0.2'
     implementation 'com.squareup.okhttp3:okhttp:4.11.0'

@@ -11,13 +11,33 @@ import java.io.File;
 import java.util.HashMap;
 import java.util.Map;
 
+import top.galqq.hook.CookieHookManager;
+
 /**
  * Cookie 获取器
  * 从 QQ 运行时获取认证 Cookie，用于 API 请求
+ * 
+ * 获取优先级：
+ * 1. 内存缓存（通过Hook获取）
+ * 2. SQLite数据库
+ * 3. WebView CookieManager
  */
 public class CookieHelper {
 
     private static final String TAG = "GalQQ.CookieHelper";
+    
+    /**
+     * Cookie获取来源枚举
+     */
+    public enum CookieSource {
+        MEMORY,     // 从内存Hook获取
+        SQLITE,     // 从SQLite数据库获取
+        WEBVIEW,    // 从WebView CookieManager获取
+        FAILED      // 获取失败
+    }
+    
+    // 最后一次获取的来源
+    private static CookieSource sLastSource = CookieSource.FAILED;
     
     // QQ 空间域名
     private static final String QZONE_DOMAIN = "qzone.qq.com";
@@ -30,36 +50,86 @@ public class CookieHelper {
         "databases/webview.db"
     };
 
+    // 调试开关：禁用SQLite兜底方案
+    private static final boolean DISABLE_SQLITE_FALLBACK = false;
+    
     /**
      * 获取所有需要的 Cookie 字符串
      * @param context 上下文
      * @return Cookie 字符串，格式如 "uin=xxx; skey=xxx; p_uin=xxx; p_skey=xxx"
      */
     public static String getCookies(Context context) {
-        // 方法1：优先尝试从 SQLite Cookie 数据库读取（最完整）
-        try {
-            String sqliteCookies = getCookiesFromSqlite(context);
-            if (sqliteCookies != null && !sqliteCookies.isEmpty() && sqliteCookies.contains("p_skey")) {
-                XposedBridge.log(TAG + ": 从 SQLite 数据库获取到 Cookie: " + sqliteCookies.length() + " 字符");
-                return sqliteCookies;
-            }
-        } catch (Throwable t) {
-            XposedBridge.log(TAG + ": SQLite Cookie 获取失败: " + t.getMessage());
+        // 打印当前内存缓存状态（调试用）
+        XposedBridge.log(TAG + ": ========== Cookie获取开始 ==========");
+        XposedBridge.log(TAG + ": [DEBUG] 内存缓存状态:");
+        XposedBridge.log(TAG + ":   skey: " + (CookieHookManager.getCachedSkey() != null ? "有值" : "空"));
+        XposedBridge.log(TAG + ":   p_skey: " + (CookieHookManager.getCachedPSkey() != null ? "有值" : "空"));
+        XposedBridge.log(TAG + ":   uin: " + (CookieHookManager.getCachedUin() != null ? CookieHookManager.getCachedUin() : "空"));
+        XposedBridge.log(TAG + ":   p_uid: " + (CookieHookManager.getCachedPUid() != null ? "有值" : "空"));
+        XposedBridge.log(TAG + ":   isCacheValid: " + CookieHookManager.isCacheValid());
+        
+        // 方法0：如果内存缓存无效，尝试主动触发Cookie获取
+        if (!CookieHookManager.isCacheValid()) {
+            XposedBridge.log(TAG + ": [TRIGGER] 内存缓存无效，尝试主动触发获取...");
+            triggerCookieFetch(context);
+            
+            // 再次检查缓存状态
+            XposedBridge.log(TAG + ": [DEBUG] 触发后内存缓存状态:");
+            XposedBridge.log(TAG + ":   skey: " + (CookieHookManager.getCachedSkey() != null ? "有值" : "空"));
+            XposedBridge.log(TAG + ":   p_skey: " + (CookieHookManager.getCachedPSkey() != null ? "有值" : "空"));
+            XposedBridge.log(TAG + ":   uin: " + (CookieHookManager.getCachedUin() != null ? CookieHookManager.getCachedUin() : "空"));
         }
         
-        // 方法2：尝试从 WebView CookieManager 获取完整 Cookie
+        // 方法1：优先从内存缓存获取（通过Hook）
+        try {
+            if (CookieHookManager.isCacheValid()) {
+                String memoryCookies = buildCookiesFromMemory();
+                if (memoryCookies != null && !memoryCookies.isEmpty()) {
+                    sLastSource = CookieSource.MEMORY;
+                    if (CookieHookManager.isCachePossiblyExpired()) {
+                        XposedBridge.log(TAG + ": [MEMORY] Cookie可能已过期，但仍然使用");
+                    }
+                    XposedBridge.log(TAG + ": [MEMORY] ✓ 从内存缓存获取到 Cookie: " + memoryCookies.length() + " 字符");
+                    XposedBridge.log(TAG + ": ========== Cookie获取完成 ==========");
+                    return memoryCookies;
+                }
+            } else {
+                XposedBridge.log(TAG + ": [MEMORY] ✗ 内存缓存无效");
+            }
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": [MEMORY] 内存Cookie获取失败: " + t.getMessage());
+        }
+        
+        // 方法2：SQLite兜底（可禁用）
+        if (!DISABLE_SQLITE_FALLBACK) {
+            try {
+                String sqliteCookies = getCookiesFromSqlite(context);
+                if (sqliteCookies != null && !sqliteCookies.isEmpty() && sqliteCookies.contains("p_skey")) {
+                    sLastSource = CookieSource.SQLITE;
+                    XposedBridge.log(TAG + ": [SQLITE] 从数据库获取到 Cookie: " + sqliteCookies.length() + " 字符");
+                    return sqliteCookies;
+                }
+            } catch (Throwable t) {
+                XposedBridge.log(TAG + ": [SQLITE] Cookie获取失败: " + t.getMessage());
+            }
+        } else {
+            XposedBridge.log(TAG + ": [SQLITE] ⚠ SQLite兜底已禁用（调试模式）");
+        }
+        
+        // 方法3：尝试从 WebView CookieManager 获取完整 Cookie
         try {
             android.webkit.CookieManager webCookieManager = android.webkit.CookieManager.getInstance();
             String allCookies = webCookieManager.getCookie("https://" + QZONE_DOMAIN);
             if (allCookies != null && !allCookies.isEmpty()) {
-                XposedBridge.log(TAG + ": 从 WebView 获取到完整 Cookie: " + allCookies.length() + " 字符");
+                sLastSource = CookieSource.WEBVIEW;
+                XposedBridge.log(TAG + ": [WEBVIEW] 获取到完整 Cookie: " + allCookies.length() + " 字符");
                 return allCookies;
             }
         } catch (Throwable t) {
-            XposedBridge.log(TAG + ": WebView Cookie 获取失败: " + t.getMessage());
+            XposedBridge.log(TAG + ": [WEBVIEW] Cookie获取失败: " + t.getMessage());
         }
         
-        // 方法3：降级手动拼接 Cookie
+        // 方法4：降级手动拼接 Cookie
         StringBuilder cookies = new StringBuilder();
         
         String uin = getPUin(context);
@@ -92,7 +162,306 @@ public class CookieHelper {
             result = result.substring(0, result.length() - 2);
         }
         
+        if (result.isEmpty()) {
+            sLastSource = CookieSource.FAILED;
+            XposedBridge.log(TAG + ": [FAILED] 所有方法都无法获取Cookie");
+        }
+        
         return result;
+    }
+    
+    /**
+     * 主动触发Cookie获取（调用QQ的方法来触发Hook）
+     */
+    private static void triggerCookieFetch(Context context) {
+        String cachedUin = CookieHookManager.getCachedUin();
+        
+        // 如果已经有完整的缓存，不需要触发
+        if (CookieHookManager.isCacheValid()) {
+            return;
+        }
+        
+        // 优先尝试使用缓存的TicketManager实例
+        if (cachedUin != null && !cachedUin.isEmpty()) {
+            XposedBridge.log(TAG + ": [TRIGGER] 已有缓存UIN: " + cachedUin + "，尝试主动获取skey/p_skey");
+            
+            // 方法0：使用缓存的TicketManager实例（最可靠）
+            if (CookieHookManager.getCachedTicketManager() != null) {
+                XposedBridge.log(TAG + ": [TRIGGER] 使用缓存的TicketManager实例");
+                if (CookieHookManager.fetchSkeyAndPskeyFromTicketManager(cachedUin)) {
+                    XposedBridge.log(TAG + ": [TRIGGER] ✓ 从缓存TicketManager获取成功");
+                    return;
+                }
+            } else {
+                XposedBridge.log(TAG + ": [TRIGGER] TicketManager实例未缓存，尝试其他方法");
+            }
+            
+            tryFetchSkeyAndPskey(context, cachedUin);
+            return;
+        }
+        
+        // 尝试从多个来源获取UIN
+        String uin = null;
+        
+        // 方法1：通过AppRuntimeHelper获取（模仿QAuxiliary）
+        try {
+            Object appRuntime = AppRuntimeHelper.getAppRuntime(context);
+            if (appRuntime != null) {
+                Object uinObj = XposedHelpers.callMethod(appRuntime, "getCurrentAccountUin");
+                if (uinObj != null) {
+                    uin = String.valueOf(uinObj);
+                    XposedBridge.log(TAG + ": [TRIGGER] 从AppRuntime获取到UIN: " + uin);
+                    // 同时更新CookieHookManager的缓存
+                    CookieHookManager.setCachedUin(uin);
+                }
+            }
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": [TRIGGER] AppRuntime获取UIN失败: " + t.getMessage());
+        }
+        
+        // 方法2：从getCurrentUin获取
+        if (uin == null || uin.isEmpty()) {
+            uin = getCurrentUin(context);
+            if (uin != null && !uin.isEmpty()) {
+                CookieHookManager.setCachedUin(uin);
+            }
+        }
+        
+        // 方法3：从SQLite的p_uin获取（不是降级，只是获取UIN值）
+        if (uin == null || uin.isEmpty()) {
+            uin = getUinFromSqlite(context);
+            if (uin != null && !uin.isEmpty()) {
+                CookieHookManager.setCachedUin(uin);
+            }
+        }
+        
+        if (uin == null || uin.isEmpty()) {
+            XposedBridge.log(TAG + ": [TRIGGER] 无法获取UIN，跳过主动触发");
+            return;
+        }
+        
+        XposedBridge.log(TAG + ": [TRIGGER] 尝试主动触发Cookie获取, uin=" + uin);
+        
+        // 尝试通过多种方式获取TicketManager
+        Object appRuntime = null;
+        
+        // 方式1：通过AppRuntimeHelper获取AppRuntime
+        try {
+            appRuntime = AppRuntimeHelper.getAppRuntime(context);
+            if (appRuntime != null) {
+                Object ticketManager = XposedHelpers.callMethod(appRuntime, "getManager", 2);
+                if (ticketManager != null) {
+                    triggerWithTicketManager(ticketManager, uin);
+                    return;
+                }
+            }
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": [TRIGGER] 通过AppRuntime获取TicketManager失败: " + t.getMessage());
+        }
+        
+        // 方式2：通过HostInfo.getApplication
+        try {
+            android.app.Application app = HostInfo.getApplication();
+            if (app != null) {
+                Object runtime = XposedHelpers.callMethod(app, "getRuntime");
+                Object ticketManager = XposedHelpers.callMethod(runtime, "getManager", 2);
+                if (ticketManager != null) {
+                    triggerWithTicketManager(ticketManager, uin);
+                    return;
+                }
+            }
+        } catch (Throwable t) {
+            // 继续
+        }
+        
+        XposedBridge.log(TAG + ": [TRIGGER] 无法获取TicketManager，等待QQ自动调用");
+    }
+    
+    /**
+     * 尝试获取skey和p_skey（当已有UIN时）
+     */
+    private static void tryFetchSkeyAndPskey(Context context, String uin) {
+        // 方式1：通过AppRuntimeHelper获取AppRuntime
+        try {
+            Object appRuntime = AppRuntimeHelper.getAppRuntime(context);
+            if (appRuntime != null) {
+                Object ticketManager = XposedHelpers.callMethod(appRuntime, "getManager", 2);
+                if (ticketManager != null) {
+                    triggerWithTicketManager(ticketManager, uin);
+                    return;
+                }
+            }
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": [TRIGGER] 通过AppRuntime获取TicketManager失败: " + t.getMessage());
+        }
+        
+        // 方式2：通过HostInfo.getApplication
+        try {
+            android.app.Application app = HostInfo.getApplication();
+            if (app != null) {
+                Object runtime = XposedHelpers.callMethod(app, "getRuntime");
+                Object ticketManager = XposedHelpers.callMethod(runtime, "getManager", 2);
+                if (ticketManager != null) {
+                    triggerWithTicketManager(ticketManager, uin);
+                    return;
+                }
+            }
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": [TRIGGER] 通过HostInfo获取TicketManager失败: " + t.getMessage());
+        }
+        
+        XposedBridge.log(TAG + ": [TRIGGER] 无法获取TicketManager，等待QQ自动调用");
+    }
+    
+    /**
+     * 使用TicketManager触发Cookie获取
+     */
+    private static void triggerWithTicketManager(Object ticketManager, String uin) {
+        XposedBridge.log(TAG + ": [TRIGGER] TicketManager类型: " + ticketManager.getClass().getName());
+        
+        try {
+            Object skey = XposedHelpers.callMethod(ticketManager, "getSkey", uin);
+            XposedBridge.log(TAG + ": [TRIGGER] getSkey返回类型: " + (skey != null ? skey.getClass().getName() : "null"));
+            if (skey instanceof String && !((String) skey).isEmpty()) {
+                CookieHookManager.setCachedSkey((String) skey);
+                String preview = ((String) skey).length() > 10 ? ((String) skey).substring(0, 10) + "..." : (String) skey;
+                XposedBridge.log(TAG + ": [TRIGGER] ✓ getSkey调用成功: " + preview);
+            } else {
+                XposedBridge.log(TAG + ": [TRIGGER] ✗ getSkey调用成功，但返回值为空或非String");
+            }
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": [TRIGGER] getSkey调用失败: " + t.getClass().getName() + ": " + t.getMessage());
+        }
+        
+        try {
+            Object pskey = XposedHelpers.callMethod(ticketManager, "getPskey", uin, QZONE_DOMAIN);
+            XposedBridge.log(TAG + ": [TRIGGER] getPskey返回类型: " + (pskey != null ? pskey.getClass().getName() : "null"));
+            if (pskey instanceof String && !((String) pskey).isEmpty()) {
+                CookieHookManager.setCachedPSkey((String) pskey);
+                String preview = ((String) pskey).length() > 10 ? ((String) pskey).substring(0, 10) + "..." : (String) pskey;
+                XposedBridge.log(TAG + ": [TRIGGER] ✓ getPskey调用成功: " + preview);
+            } else {
+                XposedBridge.log(TAG + ": [TRIGGER] ✗ getPskey调用成功，但返回值为空或非String");
+            }
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": [TRIGGER] getPskey调用失败: " + t.getClass().getName() + ": " + t.getMessage());
+        }
+    }
+    
+    /**
+     * 从SQLite数据库获取UIN（仅用于获取UIN值，不是降级方案）
+     */
+    private static String getUinFromSqlite(Context context) {
+        try {
+            File dbFile = findCookieDatabase(context);
+            if (dbFile == null) return null;
+            
+            SQLiteDatabase db = SQLiteDatabase.openDatabase(dbFile.getAbsolutePath(), null, SQLiteDatabase.OPEN_READONLY);
+            Cursor cursor = db.rawQuery("SELECT value FROM cookies WHERE name='p_uin' AND host_key LIKE ? LIMIT 1", 
+                new String[]{"%" + QZONE_DOMAIN});
+            
+            String uin = null;
+            if (cursor.moveToFirst()) {
+                uin = cursor.getString(0);
+                if (uin != null && uin.startsWith("o")) {
+                    uin = uin.substring(1);
+                }
+            }
+            cursor.close();
+            db.close();
+            
+            if (uin != null) {
+                XposedBridge.log(TAG + ": [TRIGGER] 从SQLite获取到UIN: " + uin);
+            }
+            return uin;
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+    
+    /**
+     * 从内存缓存构建Cookie字符串
+     * 格式: uin=o{uin}; skey={skey}; p_uin=o{uin}; p_uid={p_uid}; p_skey={p_skey}
+     */
+    private static String buildCookiesFromMemory() {
+        String skey = CookieHookManager.getCachedSkey();
+        String pSkey = CookieHookManager.getCachedPSkey();
+        String uin = CookieHookManager.getCachedUin();
+        String pUid = CookieHookManager.getCachedPUid();
+        
+        if (skey == null || pSkey == null || uin == null) {
+            return null;
+        }
+        
+        StringBuilder cookies = new StringBuilder();
+        
+        // 清理uin（移除可能的o前缀）
+        String cleanUin = uin.startsWith("o") ? uin.substring(1) : uin;
+        
+        cookies.append("uin=o").append(cleanUin).append("; ");
+        cookies.append("skey=").append(skey).append("; ");
+        cookies.append("p_uin=o").append(cleanUin).append("; ");
+        
+        // p_uid是可选的
+        if (pUid != null && !pUid.isEmpty()) {
+            cookies.append("p_uid=").append(pUid).append("; ");
+        }
+        
+        cookies.append("p_skey=").append(pSkey);
+        
+        return cookies.toString();
+    }
+    
+    /**
+     * 获取最后一次Cookie获取的来源
+     */
+    public static CookieSource getLastCookieSource() {
+        return sLastSource;
+    }
+    
+    /**
+     * 获取Cookie获取状态描述（用于UI显示）
+     */
+    public static String getCookieStatusDescription(Context context) {
+        StringBuilder sb = new StringBuilder();
+        
+        // 来源信息
+        sb.append("获取来源: ");
+        switch (sLastSource) {
+            case MEMORY:
+                sb.append("内存缓存 ✓");
+                break;
+            case SQLITE:
+                sb.append("SQLite数据库 ✓");
+                break;
+            case WEBVIEW:
+                sb.append("WebView ✓");
+                break;
+            case FAILED:
+                sb.append("获取失败 ✗");
+                break;
+        }
+        sb.append("\n\n");
+        
+        // 内存缓存状态
+        sb.append("内存缓存状态:\n");
+        sb.append("  skey: ").append(CookieHookManager.getCachedSkey() != null ? "已缓存" : "未缓存").append("\n");
+        sb.append("  p_skey: ").append(CookieHookManager.getCachedPSkey() != null ? "已缓存" : "未缓存").append("\n");
+        sb.append("  uin: ").append(CookieHookManager.getCachedUin() != null ? CookieHookManager.getCachedUin() : "未缓存").append("\n");
+        sb.append("  p_uid: ").append(CookieHookManager.getCachedPUid() != null ? "已缓存" : "未缓存").append("\n");
+        
+        // 过期状态
+        if (CookieHookManager.getLastUpdateTime() > 0) {
+            long ageMinutes = (System.currentTimeMillis() - CookieHookManager.getLastUpdateTime()) / 60000;
+            sb.append("  缓存时间: ").append(ageMinutes).append("分钟前");
+            if (CookieHookManager.isCachePossiblyExpired()) {
+                sb.append(" (可能已过期)");
+            }
+        } else {
+            sb.append("  缓存时间: 从未更新");
+        }
+        
+        return sb.toString();
     }
     
     /**
@@ -149,6 +518,12 @@ public class CookieHelper {
                     String preview = val.length() > 15 ? val.substring(0, 15) + "..." : val;
                     XposedBridge.log(TAG + ":   " + key + " = " + preview);
                 }
+            }
+            
+            // 将p_uid缓存到CookieHookManager（如果存在）
+            if (cookieMap.containsKey("p_uid")) {
+                CookieHookManager.setCachedPUid(cookieMap.get("p_uid").value);
+                XposedBridge.log(TAG + ": [SQLITE] 已缓存p_uid到内存");
             }
             
             // 按照正确的顺序拼接 Cookie

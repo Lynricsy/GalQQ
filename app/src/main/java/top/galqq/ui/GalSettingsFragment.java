@@ -347,11 +347,13 @@ public class GalSettingsFragment extends PreferenceFragmentCompat {
         Preference testAffinityPref = findPreference("gal_test_affinity");
         if (testAffinityPref != null) {
             testAffinityPref.setOnPreferenceClickListener(preference -> {
-                android.widget.Toast.makeText(requireContext(), "正在测试好感度数据获取...\n调试数据将保存到 Download/GalQQ_Debug/", android.widget.Toast.LENGTH_LONG).show();
+                android.widget.Toast.makeText(requireContext(), "正在测试好感度数据获取...", android.widget.Toast.LENGTH_SHORT).show();
                 
-                // 创建 CloseRankClient 并测试（启用调试模式）
+                // 获取Cookie状态信息
+                final String cookieStatus = top.galqq.utils.CookieHelper.getCookieStatusDescription(requireContext());
+                
+                // 创建 CloseRankClient 并测试
                 top.galqq.utils.CloseRankClient client = new top.galqq.utils.CloseRankClient();
-                client.setDebugMode(true); // 启用调试模式，保存请求和响应到下载目录
                 
                 // 测试获取"谁在意我"数据
                 client.fetchWhoCaresMe(requireContext(), new top.galqq.utils.CloseRankClient.RankCallback() {
@@ -361,7 +363,14 @@ public class GalSettingsFragment extends PreferenceFragmentCompat {
                         if (activity != null && isAdded()) {
                             activity.runOnUiThread(() -> {
                                 StringBuilder sb = new StringBuilder();
-                                sb.append("✅ 获取成功！\n");
+                                sb.append("✅ 获取成功！\n\n");
+                                
+                                // 显示Cookie获取来源
+                                sb.append("【Cookie状态】\n");
+                                sb.append(cookieStatus);
+                                sb.append("\n\n");
+                                
+                                sb.append("【数据结果】\n");
                                 sb.append("谁在意我: ").append(uinToScore.size()).append(" 条数据\n\n");
                                 
                                 // 显示前5条数据
@@ -374,8 +383,6 @@ public class GalSettingsFragment extends PreferenceFragmentCompat {
                                     sb.append("QQ: ").append(entry.getKey()).append(" -> ").append(entry.getValue()).append("\n");
                                     count++;
                                 }
-                                
-                                sb.append("\n\n📁 调试数据已保存到:\nDownload/GalQQ_Debug/");
                                 
                                 new android.app.AlertDialog.Builder(activity)
                                     .setTitle("好感度数据测试结果")
@@ -391,9 +398,28 @@ public class GalSettingsFragment extends PreferenceFragmentCompat {
                         android.app.Activity activity = getActivity();
                         if (activity != null && isAdded()) {
                             activity.runOnUiThread(() -> {
+                                StringBuilder sb = new StringBuilder();
+                                sb.append("❌ 获取失败: ").append(e.getMessage()).append("\n\n");
+                                
+                                // 显示Cookie状态帮助诊断
+                                sb.append("【Cookie状态】\n");
+                                sb.append(cookieStatus);
+                                sb.append("\n\n");
+                                
+                                sb.append("【排查建议】\n");
+                                top.galqq.utils.CookieHelper.CookieSource source = top.galqq.utils.CookieHelper.getLastCookieSource();
+                                if (source == top.galqq.utils.CookieHelper.CookieSource.FAILED) {
+                                    sb.append("• Cookie获取失败，请确保已登录QQ\n");
+                                    sb.append("• 尝试打开QQ空间触发Cookie刷新\n");
+                                } else if (source == top.galqq.utils.CookieHelper.CookieSource.SQLITE) {
+                                    sb.append("• 内存Hook未生效，使用SQLite降级\n");
+                                    sb.append("• 请确认LSPosed模块已激活\n");
+                                }
+                                sb.append("• 检查网络连接是否正常\n");
+                                
                                 new android.app.AlertDialog.Builder(activity)
                                     .setTitle("好感度数据测试失败")
-                                    .setMessage("❌ 获取失败: " + e.getMessage() + "\n\n请检查：\n1. 是否已登录QQ\n2. 是否有网络连接\n3. Cookie是否有效\n\n📁 调试数据已保存到:\nDownload/GalQQ_Debug/")
+                                    .setMessage(sb.toString())
                                     .setPositiveButton("确定", null)
                                     .show();
                             });

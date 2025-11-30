@@ -32,6 +32,16 @@ public class GalqqHook implements IXposedHookLoadPackage, IXposedHookZygoteInit 
         XposedBridge.log(TAG + ": Hooking QQ " + lpparam.packageName);
         
         try {
+            // 初始化 CookieHookManager（需要在其他Hook之前）
+            XposedBridge.log(TAG + ": 正在初始化CookieHookManager...");
+            try {
+                CookieHookManager.initHooks(lpparam);
+                XposedBridge.log(TAG + ": CookieHookManager初始化完成");
+            } catch (Throwable t) {
+                XposedBridge.log(TAG + ": CookieHookManager初始化失败: " + t.getMessage());
+                XposedBridge.log(t);
+            }
+            
             // 初始化 Hooks
             MessageInterceptor.init(lpparam.classLoader);
             SettingsInterceptor.init(lpparam.classLoader);

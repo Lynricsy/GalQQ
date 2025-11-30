@@ -156,7 +156,7 @@
         <Preference
             android:key="gal_test_affinity"
             android:title="测试好感度数据获取"
-            android:summary="点击测试从QQ空间获取亲密度排行数据" />
+            android:summary="测试Cookie和亲密度API是否正常工作" />
     </PreferenceCategory>
 
     <PreferenceCategory android:title="@string/gal_dict_cat_title">
@@ -181,7 +181,7 @@
         <Preference
             android:key="gal_version"
             android:title="版本号"
-            android:summary="1.0.1 Alpha" />
+            android:summary="1.0.2 Alpha" />
             
         <Preference
             android:key="gal_developer"
