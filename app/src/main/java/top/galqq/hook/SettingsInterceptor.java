@@ -20,7 +20,6 @@ import de.robv.android.xposed.XC_MethodHook;
 import de.robv.android.xposed.XposedBridge;
 import de.robv.android.xposed.XposedHelpers;
 import top.galqq.R;
-import top.galqq.ui.GalSettingsActivity;
 
 public class SettingsInterceptor {
 
@@ -393,7 +392,8 @@ public class SettingsInterceptor {
             
             item.setOnClickListener(v -> {
                 try {
-                    Intent intent = new Intent(activity, GalSettingsActivity.class);
+                    Intent intent = new Intent();
+                    intent.setClassName(activity, "top.galqq.ui.SettingsUiFragmentHostActivity");
                     activity.startActivity(intent);
                 } catch (Exception e) {
                     XposedBridge.log(TAG + ": Failed to start activity: " + e.getMessage());

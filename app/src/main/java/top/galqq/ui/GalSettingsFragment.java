@@ -11,6 +11,43 @@ import top.galqq.config.ConfigManager;
 
 public class GalSettingsFragment extends PreferenceFragmentCompat {
 
+    /**
+     * 更新Provider ListPreference的summary显示
+     * @param pref ListPreference
+     * @param provider 服务商标识
+     */
+    private void updateProviderSummary(androidx.preference.ListPreference pref, String provider) {
+        String displayName = ConfigManager.getProviderDisplayName(provider);
+        String apiUrl = ConfigManager.getDefaultApiUrl(provider);
+        if (apiUrl.isEmpty()) {
+            apiUrl = ConfigManager.getApiUrl();
+        }
+        pref.setSummary(displayName + "\n" + apiUrl);
+    }
+
+    /**
+     * 更新提示词管理的summary显示
+     */
+    private void updatePromptManagerSummary(Preference pref) {
+        java.util.List<ConfigManager.PromptItem> list = ConfigManager.getPromptList();
+        int index = ConfigManager.getCurrentPromptIndex();
+        if (index >= 0 && index < list.size()) {
+            pref.setSummary("当前: " + list.get(index).name + " (共" + list.size() + "个)");
+        } else {
+            pref.setSummary("管理多个提示词，点击切换不同风格");
+        }
+    }
+
+    @Override
+    public void onResume() {
+        super.onResume();
+        // 从提示词管理返回时刷新显示
+        Preference promptManagerPref = findPreference("gal_prompt_manager");
+        if (promptManagerPref != null) {
+            updatePromptManagerSummary(promptManagerPref);
+        }
+    }
+
     @Override
     public void onCreatePreferences(Bundle savedInstanceState, String rootKey) {
         // Don't use SharedPreferences at all, we'll manually handle everything
@@ -49,13 +86,14 @@ public class GalSettingsFragment extends PreferenceFragmentCompat {
             });
         }
 
-        // System Prompt
-        EditTextPreference sysPromptPref = findPreference(ConfigManager.KEY_SYS_PROMPT);
-        if (sysPromptPref != null) {
-            sysPromptPref.setText(ConfigManager.getSysPrompt());
-            sysPromptPref.setOnPreferenceChangeListener((preference, newValue) -> {
-                ConfigManager.setSysPrompt((String) newValue);
-                sysPromptPref.setText((String) newValue);
+        // Prompt Manager (提示词管理)
+        Preference promptManagerPref = findPreference("gal_prompt_manager");
+        if (promptManagerPref != null) {
+            // 更新summary显示当前使用的提示词名称
+            updatePromptManagerSummary(promptManagerPref);
+            promptManagerPref.setOnPreferenceClickListener(preference -> {
+                Intent intent = new Intent(requireContext(), PromptManagerActivity.class);
+                startActivity(intent);
                 return true;
             });
         }
@@ -106,10 +144,29 @@ public class GalSettingsFragment extends PreferenceFragmentCompat {
         
         // AI Provider
         androidx.preference.ListPreference aiProviderPref = findPreference(ConfigManager.KEY_AI_PROVIDER);
+        EditTextPreference apiUrlPrefForProvider = findPreference(ConfigManager.KEY_API_URL);
         if (aiProviderPref != null) {
-            aiProviderPref.setValue(ConfigManager.getAiProvider());
+            String currentProvider = ConfigManager.getAiProvider();
+            aiProviderPref.setValue(currentProvider);
+            // 初始化summary显示
+            updateProviderSummary(aiProviderPref, currentProvider);
+            
             aiProviderPref.setOnPreferenceChangeListener((preference, newValue) -> {
-                ConfigManager.setAiProvider((String) newValue);
+                String provider = (String) newValue;
+                ConfigManager.setAiProvider(provider);
+                
+                // 自动填充API URL
+                String defaultUrl = ConfigManager.getDefaultApiUrl(provider);
+                if (!defaultUrl.isEmpty()) {
+                    ConfigManager.setApiUrl(defaultUrl);
+                    // 更新API URL EditTextPreference的显示
+                    if (apiUrlPrefForProvider != null) {
+                        apiUrlPrefForProvider.setText(defaultUrl);
+                    }
+                }
+                
+                // 更新Provider的summary显示
+                updateProviderSummary(aiProviderPref, provider);
                 return true;
             });
         }
@@ -158,6 +215,52 @@ public class GalSettingsFragment extends PreferenceFragmentCompat {
                     if (qps > 0.1) {
                         ConfigManager.setAiQps(qps);
                         aiQpsPref.setText((String) newValue);
+                        return true;
+                    }
+                } catch (Exception e) {}
+                return false;
+            });
+        }
+        
+        // Context Enabled (启用对话上下文)
+        Preference contextEnabledSwitch = findPreference(ConfigManager.KEY_CONTEXT_ENABLED);
+        if (contextEnabledSwitch != null) {
+            if (contextEnabledSwitch instanceof androidx.preference.TwoStatePreference) {
+                ((androidx.preference.TwoStatePreference) contextEnabledSwitch).setChecked(ConfigManager.isContextEnabled());
+            }
+            contextEnabledSwitch.setOnPreferenceChangeListener((preference, newValue) -> {
+                ConfigManager.setContextEnabled((Boolean) newValue);
+                return true;
+            });
+        }
+        
+        // Context Message Count (上下文消息数)
+        EditTextPreference contextCountPref = findPreference(ConfigManager.KEY_CONTEXT_MESSAGE_COUNT);
+        if (contextCountPref != null) {
+            contextCountPref.setText(String.valueOf(ConfigManager.getContextMessageCount()));
+            contextCountPref.setOnPreferenceChangeListener((preference, newValue) -> {
+                try {
+                    int count = Integer.parseInt((String) newValue);
+                    if (count >= 1 && count <= 30) {
+                        ConfigManager.setContextMessageCount(count);
+                        contextCountPref.setText((String) newValue);
+                        return true;
+                    }
+                } catch (Exception e) {}
+                return false;
+            });
+        }
+        
+        // History Threshold (历史消息阈值)
+        EditTextPreference historyThresholdPref = findPreference(ConfigManager.KEY_HISTORY_THRESHOLD);
+        if (historyThresholdPref != null) {
+            historyThresholdPref.setText(String.valueOf(ConfigManager.getHistoryThreshold()));
+            historyThresholdPref.setOnPreferenceChangeListener((preference, newValue) -> {
+                try {
+                    int seconds = Integer.parseInt((String) newValue);
+                    if (seconds > 0) {
+                        ConfigManager.setHistoryThreshold(seconds);
+                        historyThresholdPref.setText((String) newValue);
                         return true;
                     }
                 } catch (Exception e) {}

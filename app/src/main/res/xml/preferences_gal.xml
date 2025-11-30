@@ -14,14 +14,10 @@
             android:summary="@string/gal_ai_enabled_summary"
             android:defaultValue="false" />
 
-        <EditTextPreference
-            android:key="gal_sys_prompt"
-            android:title="@string/gal_sys_prompt_title"
-            android:summary="@string/gal_sys_prompt_summary"
-            android:defaultValue="You are playing a Galgame character. Based on the user's message, give 3 short, character-consistent response options separated by |||."
-           android:dialogMessage="@string/gal_sys_prompt_dialog"
-            android:lines="4"
-            android:inputType="textMultiLine" />
+        <Preference
+            android:key="gal_prompt_manager"
+            android:title="提示词管理"
+            android:summary="管理多个提示词，点击切换不同风格" />
 
         <EditTextPreference
             android:key="gal_api_url"

@@ -2,21 +2,45 @@
 <resources>
     <!-- AI Provider选项 -->
     <string-array name="ai_provider_names">
+        <item>月之暗面 (Kimi)</item>
+        <item>百度千帆 (文心)</item>
+        <item>智谱AI (GLM-4)</item>
+        <item>讯飞星火 (Spark)</item>
+        <item>百川智能 (Baichuan)</item>
+        <item>字节豆包 (Doubao)</item>
+        <item>商汤日日新 (SenseNova)</item>
         <item>OpenAI</item>
-        <item>Kimi</item>
+        <item>LinkAI</item>
+        <item>Groq</item>
+        <item>Together.ai</item>
+        <item>Fireworks.ai</item>
+        <item>DeepInfra</item>
         <item>DeepSeek</item>
-        <item>Qwen</item>
-        <item>GLM</item>
-        <item>Ollama</item>
+        <item>阿里云DashScope</item>
+        <item>硅基流动 (SiliconFlow)</item>
+        <item>Ollama (本地)</item>
+        <item>自定义</item>
     </string-array>
     
     <string-array name="ai_provider_values">
-        <item>openai</item>
         <item>kimi</item>
-        <item>deepseek</item>
-        <item>qwen</item>
+        <item>baidu</item>
         <item>glm</item>
+        <item>spark</item>
+        <item>baichuan</item>
+        <item>doubao</item>
+        <item>sensenova</item>
+        <item>openai</item>
+        <item>linkai</item>
+        <item>groq</item>
+        <item>together</item>
+        <item>fireworks</item>
+        <item>deepinfra</item>
+        <item>deepseek</item>
+        <item>dashscope</item>
+        <item>siliconflow</item>
         <item>ollama</item>
+        <item>custom</item>
     </string-array>
     
     <string-array name="filter_mode_names">

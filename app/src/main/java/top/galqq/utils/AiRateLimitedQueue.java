@@ -183,19 +183,21 @@ public class AiRateLimitedQueue {
     
     /**
      * 处理单个请求（带重试）
+     * 支持两种重试：
+     * 1. 429速率限制：最多重试3次，指数退避
+     * 2. 格式错误：最多重试5次，静默重试
      */
     private void processRequest(PrioritizedRequest request) {
-        final int MAX_RETRIES = 3;
+        final int MAX_RATE_LIMIT_RETRIES = 3;
+        final int MAX_FORMAT_ERROR_RETRIES = 5;
         final int[] BACKOFF_MS = {1000, 2000, 4000};  // 1s, 2s, 4s
         
-        int attempt = 0;
+        int rateLimitAttempt = 0;
+        int formatErrorAttempt = 0;
         Exception lastException = null;
         
-        while (attempt <= MAX_RETRIES) {
+        while (rateLimitAttempt <= MAX_RATE_LIMIT_RETRIES && formatErrorAttempt < MAX_FORMAT_ERROR_RETRIES) {
             try {
-                // XposedBridge.log(TAG + ": 处理请求 [" + request.priority + "] " +
-                //                "(尝试 " + (attempt + 1) + "/" + (MAX_RETRIES + 1) + ")");
-                
                 // 调用AI接口（同步）
                 final List<String> options = fetchOptionsSync(request);
                 
@@ -205,7 +207,6 @@ public class AiRateLimitedQueue {
                 // 回调成功（切换到UI线程）
                 mainHandler.post(() -> request.callback.onSuccess(options));
                 
-                // XposedBridge.log(TAG + ": ✅ 请求成功");
                 return;
                 
             } catch (RateLimitException e) {
@@ -213,13 +214,28 @@ public class AiRateLimitedQueue {
                 rateLimiter.on429Error();
                 lastException = e;
                 
-                if (attempt < MAX_RETRIES) {
-                    long delay = BACKOFF_MS[attempt];
+                if (rateLimitAttempt < MAX_RATE_LIMIT_RETRIES) {
+                    long delay = BACKOFF_MS[rateLimitAttempt];
                     XposedBridge.log(TAG + ": ⚠️ 触发429限流，等待 " + delay + "ms 后重试");
                     SystemClock.sleep(delay);
-                    attempt++;
+                    rateLimitAttempt++;
                 } else {
-                    break;  // 重试次数用尽
+                    break;  // 429重试次数用尽
+                }
+                
+            } catch (FormatErrorException e) {
+                // 格式错误：静默重试
+                formatErrorAttempt++;
+                lastException = e;
+                
+                if (formatErrorAttempt < MAX_FORMAT_ERROR_RETRIES) {
+                    XposedBridge.log(TAG + ": ⚠️ AI返回格式错误，自动重试 (" + formatErrorAttempt + "/" + MAX_FORMAT_ERROR_RETRIES + ")");
+                    // 短暂延迟后重试
+                    SystemClock.sleep(500);
+                } else {
+                    // 达到最大重试次数
+                    XposedBridge.log(TAG + ": ❌ AI返回格式错误，已重试 " + MAX_FORMAT_ERROR_RETRIES + " 次仍失败");
+                    break;
                 }
                 
             } catch (Exception e) {
@@ -231,9 +247,30 @@ public class AiRateLimitedQueue {
         }
         
         // 重试次数用尽，最终失败
-        XposedBridge.log(TAG + ": ❌ 重试 " + MAX_RETRIES + " 次后仍失败");
         final Exception finalException = lastException;
-        mainHandler.post(() -> request.callback.onFailure(finalException));
+        final boolean isFormatError = finalException instanceof FormatErrorException;
+        
+        if (isFormatError) {
+            XposedBridge.log(TAG + ": ❌ 格式错误重试 " + MAX_FORMAT_ERROR_RETRIES + " 次后仍失败，通知显示重新加载按钮");
+            // 格式错误：通知显示重新加载按钮
+            if (request.callback instanceof HttpAiClient.AiCallbackWithRetry) {
+                HttpAiClient.AiCallbackWithRetry retryCallback = (HttpAiClient.AiCallbackWithRetry) request.callback;
+                // 创建重试动作
+                Runnable retryAction = () -> {
+                    XposedBridge.log(TAG + ": 用户点击重新加载");
+                    // 重新提交请求
+                    submitRequest(request.context, request.msgContent, request.msgId, request.priority,
+                                 request.contextMessages, request.currentSenderName, request.currentTimestamp,
+                                 request.callback);
+                };
+                mainHandler.post(() -> retryCallback.onAllRetriesFailed(retryAction));
+            } else {
+                // 普通回调：直接失败
+                mainHandler.post(() -> request.callback.onFailure(finalException));
+            }
+        } else {
+            mainHandler.post(() -> request.callback.onFailure(finalException));
+        }
     }
     
     /**
@@ -271,10 +308,16 @@ public class AiRateLimitedQueue {
         }
         
         if (errorHolder[0] != null) {
-            // 检查是否是429错误
-            if (errorHolder[0].getMessage() != null && 
-                errorHolder[0].getMessage().contains("Rate limit")) {
-                throw new RateLimitException(errorHolder[0]);
+            String errorMsg = errorHolder[0].getMessage();
+            if (errorMsg != null) {
+                // 检查是否是429错误
+                if (errorMsg.contains("Rate limit")) {
+                    throw new RateLimitException(errorHolder[0]);
+                }
+                // 检查是否是格式错误（可重试）
+                if (errorMsg.contains("格式") || errorMsg.contains("选项不足")) {
+                    throw new FormatErrorException(errorHolder[0]);
+                }
             }
             throw errorHolder[0];
         }
@@ -613,6 +656,19 @@ public class AiRateLimitedQueue {
     private static class RateLimitException extends Exception {
         RateLimitException(Exception cause) {
             super("Rate limit exceeded", cause);
+        }
+    }
+    
+    /**
+     * 格式错误异常（AI返回格式无法解析）
+     */
+    private static class FormatErrorException extends Exception {
+        FormatErrorException(Exception cause) {
+            super("AI返回格式错误", cause);
+        }
+        
+        FormatErrorException(String message) {
+            super(message);
         }
     }
 }

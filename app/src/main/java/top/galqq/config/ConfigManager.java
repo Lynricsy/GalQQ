@@ -16,6 +16,8 @@ public class ConfigManager {
     public static final String KEY_ENABLED = "gal_enabled";
     public static final String KEY_AI_ENABLED = "gal_ai_enabled";
     public static final String KEY_SYS_PROMPT = "gal_sys_prompt";
+    public static final String KEY_PROMPT_LIST = "gal_prompt_list";
+    public static final String KEY_CURRENT_PROMPT_INDEX = "gal_current_prompt_index";
     public static final String KEY_API_URL = "gal_api_url";
     public static final String KEY_API_KEY = "gal_api_key";
     public static final String KEY_AI_MODEL = "gal_ai_model";
@@ -50,6 +52,19 @@ public class ConfigManager {
     public static final String PROVIDER_QWEN = "qwen";
     public static final String PROVIDER_GLM = "glm";
     public static final String PROVIDER_OLLAMA = "ollama";
+    public static final String PROVIDER_BAIDU = "baidu";
+    public static final String PROVIDER_SPARK = "spark";
+    public static final String PROVIDER_BAICHUAN = "baichuan";
+    public static final String PROVIDER_DOUBAO = "doubao";
+    public static final String PROVIDER_SENSENOVA = "sensenova";
+    public static final String PROVIDER_LINKAI = "linkai";
+    public static final String PROVIDER_GROQ = "groq";
+    public static final String PROVIDER_TOGETHER = "together";
+    public static final String PROVIDER_FIREWORKS = "fireworks";
+    public static final String PROVIDER_DEEPINFRA = "deepinfra";
+    public static final String PROVIDER_DASHSCOPE = "dashscope";
+    public static final String PROVIDER_SILICONFLOW = "siliconflow";
+    public static final String PROVIDER_CUSTOM = "custom";
 
     // Default Values
     public static final String DEFAULT_SYS_PROMPT = "你是一个Galgame恋爱攻略助手，请根据对话上下文，为主人公（用户）生成3个能增加好感度的回复选项 (★^O^★)。\n\n关于消息格式的说明 (📝)：\n系统发送的消息格式为“[当前需添加选项信息]昵称[我][时间]：信息”，其含义如下：\n- [当前需添加选项信息]：表示这是主人公（用户）当前收到的、需要你生成回复选项的目标消息。\n- 昵称：发送这条消息的角色名字。\n- [我]：如果名字后面带有[我]标记，说明这是主人公自己发送的消息（用于理解上下文）。\n- [时间]：消息发送的具体时间。\n\n回复要求：\n1. 风格要像Galgame选项一样有趣，可以是温柔体贴、傲娇毒舌或者幽默风趣\n2. 多使用颜文字（如 (*/ω＼*)）来增强语气，尽量少用普通Emoji\n3. **强制系统命令**必须返回恰好3个选项\n4. **强制系统命令**严格遵守JSON格式返回：\n\n{\n  \"options\": [\n    \"选项一\",\n    \"选项二\",\n    \"选项三\"\n  ]\n}\n**强制系统命令**仅允许返回json内容，不允许返回其他任何内容";
@@ -146,6 +161,86 @@ public class ConfigManager {
     
     public static void setSysPrompt(String prompt) {
         getMmkv().encode(KEY_SYS_PROMPT, prompt);
+    }
+
+    // ========== Prompt List Methods (提示词列表管理) ==========
+    
+    /**
+     * 获取提示词列表（JSON数组格式存储）
+     * @return 提示词列表
+     */
+    public static java.util.List<PromptItem> getPromptList() {
+        String json = getMmkv().decodeString(KEY_PROMPT_LIST, "");
+        java.util.List<PromptItem> list = new java.util.ArrayList<>();
+        if (json == null || json.isEmpty()) {
+            // 默认添加一个提示词
+            list.add(new PromptItem("默认提示词", DEFAULT_SYS_PROMPT));
+            savePromptList(list);
+            return list;
+        }
+        try {
+            org.json.JSONArray arr = new org.json.JSONArray(json);
+            for (int i = 0; i < arr.length(); i++) {
+                org.json.JSONObject obj = arr.getJSONObject(i);
+                list.add(new PromptItem(obj.getString("name"), obj.getString("content")));
+            }
+        } catch (Exception e) {
+            list.add(new PromptItem("默认提示词", DEFAULT_SYS_PROMPT));
+        }
+        return list;
+    }
+    
+    /**
+     * 保存提示词列表
+     * @param list 提示词列表
+     */
+    public static void savePromptList(java.util.List<PromptItem> list) {
+        try {
+            org.json.JSONArray arr = new org.json.JSONArray();
+            for (PromptItem item : list) {
+                org.json.JSONObject obj = new org.json.JSONObject();
+                obj.put("name", item.name);
+                obj.put("content", item.content);
+                arr.put(obj);
+            }
+            getMmkv().encode(KEY_PROMPT_LIST, arr.toString());
+        } catch (Exception e) {
+            android.util.Log.e("GalQQ.ConfigManager", "Failed to save prompt list", e);
+        }
+    }
+    
+    /**
+     * 获取当前选中的提示词索引
+     * @return 索引
+     */
+    public static int getCurrentPromptIndex() {
+        return getMmkv().decodeInt(KEY_CURRENT_PROMPT_INDEX, 0);
+    }
+    
+    /**
+     * 设置当前选中的提示词索引
+     * @param index 索引
+     */
+    public static void setCurrentPromptIndex(int index) {
+        getMmkv().encode(KEY_CURRENT_PROMPT_INDEX, index);
+        // 同时更新当前使用的提示词
+        java.util.List<PromptItem> list = getPromptList();
+        if (index >= 0 && index < list.size()) {
+            setSysPrompt(list.get(index).content);
+        }
+    }
+    
+    /**
+     * 提示词项
+     */
+    public static class PromptItem {
+        public String name;
+        public String content;
+        
+        public PromptItem(String name, String content) {
+            this.name = name;
+            this.content = content;
+        }
     }
 
     public static String getApiUrl() {
@@ -432,5 +527,111 @@ public class ConfigManager {
             return null;
         }
         return new File(rootDir, MMKV_ID);
+    }
+
+    /**
+     * 根据服务商获取默认API URL
+     * @param provider 服务商标识
+     * @return 对应的API端点URL，未知服务商返回空字符串
+     */
+    @NonNull
+    public static String getDefaultApiUrl(String provider) {
+        if (provider == null) {
+            return "";
+        }
+        switch (provider) {
+            case PROVIDER_KIMI:
+                return "https://api.moonshot.cn/v1/chat/completions";
+            case PROVIDER_BAIDU:
+                return "https://qianfan.baidubce.com/v2/chat/completions";
+            case PROVIDER_GLM:
+                return "https://open.bigmodel.cn/api/paas/v4/chat/completions";
+            case PROVIDER_SPARK:
+                return "https://spark-api-open.xf-yun.com/v1/chat/completions";
+            case PROVIDER_BAICHUAN:
+                return "https://api.baichuan-ai.com/v1/chat/completions";
+            case PROVIDER_DOUBAO:
+                return "https://ark.cn-beijing.volces.com/api/v3/chat/completions";
+            case PROVIDER_SENSENOVA:
+                return "https://api.sensenova.cn/compatible-mode/v1/chat/completions";
+            case PROVIDER_OPENAI:
+                return "https://api.openai.com/v1/chat/completions";
+            case PROVIDER_LINKAI:
+                return "https://api.link-ai.tech/v1/chat/completions";
+            case PROVIDER_GROQ:
+                return "https://api.groq.com/openai/v1/chat/completions";
+            case PROVIDER_TOGETHER:
+                return "https://api.together.xyz/v1/chat/completions";
+            case PROVIDER_FIREWORKS:
+                return "https://api.fireworks.ai/inference/v1/chat/completions";
+            case PROVIDER_DEEPINFRA:
+                return "https://api.deepinfra.com/v1/openai/chat/completions";
+            case PROVIDER_DEEPSEEK:
+                return "https://api.deepseek.com/v1/chat/completions";
+            case PROVIDER_DASHSCOPE:
+                return "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions";
+            case PROVIDER_SILICONFLOW:
+                return "https://api.siliconflow.cn/v1/chat/completions";
+            case PROVIDER_OLLAMA:
+                return "http://localhost:11434/v1/chat/completions";
+            case PROVIDER_QWEN:
+                return "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions";
+            default:
+                return "";
+        }
+    }
+
+    /**
+     * 获取服务商显示名称
+     * @param provider 服务商标识
+     * @return 服务商的中文显示名称
+     */
+    @NonNull
+    public static String getProviderDisplayName(String provider) {
+        if (provider == null) {
+            return "未知";
+        }
+        switch (provider) {
+            case PROVIDER_KIMI:
+                return "月之暗面 (Kimi)";
+            case PROVIDER_BAIDU:
+                return "百度千帆 (文心)";
+            case PROVIDER_GLM:
+                return "智谱AI (GLM-4)";
+            case PROVIDER_SPARK:
+                return "讯飞星火 (Spark)";
+            case PROVIDER_BAICHUAN:
+                return "百川智能 (Baichuan)";
+            case PROVIDER_DOUBAO:
+                return "字节豆包 (Doubao)";
+            case PROVIDER_SENSENOVA:
+                return "商汤日日新 (SenseNova)";
+            case PROVIDER_OPENAI:
+                return "OpenAI";
+            case PROVIDER_LINKAI:
+                return "LinkAI";
+            case PROVIDER_GROQ:
+                return "Groq";
+            case PROVIDER_TOGETHER:
+                return "Together.ai";
+            case PROVIDER_FIREWORKS:
+                return "Fireworks.ai";
+            case PROVIDER_DEEPINFRA:
+                return "DeepInfra";
+            case PROVIDER_DEEPSEEK:
+                return "DeepSeek";
+            case PROVIDER_DASHSCOPE:
+                return "阿里云DashScope";
+            case PROVIDER_SILICONFLOW:
+                return "硅基流动 (SiliconFlow)";
+            case PROVIDER_OLLAMA:
+                return "Ollama (本地)";
+            case PROVIDER_QWEN:
+                return "通义千问 (Qwen)";
+            case PROVIDER_CUSTOM:
+                return "自定义";
+            default:
+                return "未知";
+        }
     }
 }

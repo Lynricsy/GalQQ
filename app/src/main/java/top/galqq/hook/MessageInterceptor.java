@@ -364,6 +364,7 @@ public class MessageInterceptor {
             }
             
             // 提交到限流队列（带优先级、上下文和当前消息元数据）
+            // 使用支持重试的回调接口
             AiRateLimitedQueue.getInstance(context).submitRequest(
                 context, 
                 msgContent, 
@@ -372,7 +373,7 @@ public class MessageInterceptor {
                 contextMessages, // 传递上下文消息
                 currentSenderName, // 当前消息发送人昵称
                 currentTimestamp, // 当前消息时间戳
-                new HttpAiClient.AiCallback() {
+                new HttpAiClient.AiCallbackWithRetry() {
                     @Override
                     public void onSuccess(List<String> options) {
                         // 恢复顶部间距
@@ -388,12 +389,69 @@ public class MessageInterceptor {
                         // AI失败时隐藏选项条（已在UI线程）
                         bar.setVisibility(View.GONE);
                     }
+                    
+                    @Override
+                    public void onAllRetriesFailed(Runnable retryAction) {
+                        // 所有重试都失败后，显示"重新加载"按钮
+                        showReloadButton(context, bar, retryAction, msgObj);
+                    }
                 }
             );
         } else {
             // 本地词库模式：每次随机生成，不使用缓存
             useDictionaryNT(context, bar, msgObj);
         }
+    }
+
+    /**
+     * 显示"重新加载"按钮（当所有重试都失败后）
+     * 使用与选项按钮相同的UI风格
+     */
+    private static void showReloadButton(Context context, LinearLayout bar, Runnable retryAction, Object chatMessage) {
+        bar.removeAllViews();
+        bar.setPadding(0, dp2px(context, 5), 0, dp2px(context, 5));
+        
+        TextView reloadBtn = new TextView(context);
+        reloadBtn.setText("重新加载");
+        reloadBtn.setTextSize(13);
+        reloadBtn.setPadding(dp2px(context, 12), dp2px(context, 8), dp2px(context, 12), dp2px(context, 8));
+        // 使用浅红色背景表示错误状态
+        reloadBtn.setBackground(getSelectableRoundedBackground(Color.parseColor("#FFEBEE"), dp2px(context, 12)));
+        reloadBtn.setTextColor(Color.parseColor("#D32F2F"));
+        reloadBtn.setClickable(true);
+        reloadBtn.setFocusable(true);
+        
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        );
+        lp.gravity = Gravity.START;
+        reloadBtn.setLayoutParams(lp);
+        
+        reloadBtn.setOnClickListener(v -> {
+            // 点击后显示加载状态
+            bar.removeAllViews();
+            bar.setPadding(0, 0, 0, dp2px(context, 5));
+            
+            TextView tvLoading = new TextView(context);
+            tvLoading.setText("重新加载中...");
+            tvLoading.setTextSize(12);
+            tvLoading.setTextColor(Color.parseColor("#999999"));
+            LinearLayout.LayoutParams loadingLp = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
+            );
+            loadingLp.gravity = Gravity.START | Gravity.CENTER_VERTICAL;
+            loadingLp.leftMargin = dp2px(context, 2);
+            tvLoading.setLayoutParams(loadingLp);
+            bar.addView(tvLoading);
+            
+            // 执行重试
+            retryAction.run();
+        });
+        
+        bar.addView(reloadBtn);
+        bar.setVisibility(View.VISIBLE);
+        
+        XposedBridge.log(TAG + ": Showing reload button after all retries failed");
     }
 
     private static void useDictionary(Context context, LinearLayout bar, Object chatMessage) {
@@ -420,8 +478,12 @@ public class MessageInterceptor {
             tv.setText(option);
             tv.setTextSize(13);
             tv.setPadding(dp2px(context, 12), dp2px(context, 8), dp2px(context, 12), dp2px(context, 8));
-            tv.setBackground(getRoundedBackground(Color.parseColor("#F2F2F2"), dp2px(context, 12)));
+            // 使用带按压状态的背景，支持视觉反馈
+            tv.setBackground(getSelectableRoundedBackground(Color.parseColor("#F2F2F2"), dp2px(context, 12)));
             tv.setTextColor(Color.BLACK);
+            // 启用点击和焦点，确保按压状态生效
+            tv.setClickable(true);
+            tv.setFocusable(true);
             
             int screenWidth = context.getResources().getDisplayMetrics().widthPixels;
             int maxWidth = screenWidth - dp2px(context, 16);
@@ -434,8 +496,18 @@ public class MessageInterceptor {
             tv.setLayoutParams(lp);
             tv.setGravity(Gravity.CENTER_VERTICAL);
             
+            // 短按：直接发送消息
             tv.setOnClickListener(v -> {
                 sendMessage(context, option, chatMessage);
+            });
+            
+            // 长按：弹出编辑对话框
+            tv.setOnLongClickListener(v -> {
+                // 触觉反馈
+                v.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS);
+                // 显示编辑对话框
+                showEditDialog(context, option, chatMessage);
+                return true; // 消费事件，防止触发 onClick
             });
             
             bar.addView(tv);
@@ -486,6 +558,213 @@ public class MessageInterceptor {
             XposedBridge.log(TAG + ": Failed to send message: " + e.getMessage());
             Toast.makeText(context, "发送失败: " + e.getMessage(), Toast.LENGTH_SHORT).show();
         }
+    }
+
+    /**
+     * 显示编辑对话框，允许用户修改选项内容后发送
+     * 使用自定义 UI，风格更现代美观
+     * @param context 上下文
+     * @param originalText 原始选项文本
+     * @param chatMessage 消息对象（用于发送）
+     */
+    private static void showEditDialog(Context context, String originalText, Object chatMessage) {
+        // 创建半透明遮罩层
+        android.widget.FrameLayout overlay = new android.widget.FrameLayout(context);
+        overlay.setBackgroundColor(Color.parseColor("#80000000")); // 半透明黑色
+        
+        // 创建对话框容器（白色圆角卡片）
+        LinearLayout dialogContainer = new LinearLayout(context);
+        dialogContainer.setOrientation(LinearLayout.VERTICAL);
+        dialogContainer.setBackgroundDrawable(createDialogBackground());
+        dialogContainer.setPadding(dp2px(context, 20), dp2px(context, 20), dp2px(context, 20), dp2px(context, 16));
+        
+        // 计算对话框宽度（屏幕宽度 - 48dp 边距）
+        int screenWidth = context.getResources().getDisplayMetrics().widthPixels;
+        int dialogWidth = screenWidth - dp2px(context, 48);
+        
+        android.widget.FrameLayout.LayoutParams dialogParams = new android.widget.FrameLayout.LayoutParams(
+            dialogWidth, ViewGroup.LayoutParams.WRAP_CONTENT
+        );
+        dialogParams.gravity = Gravity.CENTER;
+        dialogContainer.setLayoutParams(dialogParams);
+        
+        // 标题
+        TextView titleView = new TextView(context);
+        titleView.setText("编辑回复");
+        titleView.setTextSize(18);
+        titleView.setTextColor(Color.parseColor("#333333"));
+        titleView.setTypeface(null, android.graphics.Typeface.BOLD);
+        LinearLayout.LayoutParams titleParams = new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        );
+        titleParams.bottomMargin = dp2px(context, 16);
+        titleView.setLayoutParams(titleParams);
+        dialogContainer.addView(titleView);
+        
+        // 输入框容器（带边框的圆角背景）
+        android.widget.FrameLayout inputContainer = new android.widget.FrameLayout(context);
+        inputContainer.setBackgroundDrawable(createInputBackground());
+        inputContainer.setPadding(dp2px(context, 12), dp2px(context, 8), dp2px(context, 12), dp2px(context, 8));
+        LinearLayout.LayoutParams inputContainerParams = new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        );
+        inputContainerParams.bottomMargin = dp2px(context, 20);
+        inputContainer.setLayoutParams(inputContainerParams);
+        
+        // 输入框
+        android.widget.EditText editText = new android.widget.EditText(context);
+        editText.setText(originalText);
+        editText.setSelection(originalText.length());
+        editText.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE);
+        editText.setMinLines(2);
+        editText.setMaxLines(6);
+        editText.setTextSize(15);
+        editText.setTextColor(Color.parseColor("#333333"));
+        editText.setHintTextColor(Color.parseColor("#999999"));
+        editText.setHint("输入回复内容...");
+        editText.setBackgroundColor(Color.TRANSPARENT); // 去掉默认下划线
+        editText.setPadding(0, 0, 0, 0);
+        editText.setGravity(Gravity.TOP | Gravity.START);
+        inputContainer.addView(editText, new android.widget.FrameLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        ));
+        dialogContainer.addView(inputContainer);
+        
+        // 按钮容器
+        LinearLayout buttonContainer = new LinearLayout(context);
+        buttonContainer.setOrientation(LinearLayout.HORIZONTAL);
+        buttonContainer.setGravity(Gravity.END);
+        LinearLayout.LayoutParams buttonContainerParams = new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        );
+        buttonContainer.setLayoutParams(buttonContainerParams);
+        
+        // 创建 Dialog 引用（用于关闭）
+        final android.app.Dialog[] dialogRef = new android.app.Dialog[1];
+        
+        // 取消按钮
+        TextView cancelBtn = createDialogButton(context, "取消", false);
+        cancelBtn.setOnClickListener(v -> {
+            if (dialogRef[0] != null) dialogRef[0].dismiss();
+        });
+        LinearLayout.LayoutParams cancelParams = new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        );
+        cancelParams.rightMargin = dp2px(context, 12);
+        cancelBtn.setLayoutParams(cancelParams);
+        buttonContainer.addView(cancelBtn);
+        
+        // 发送按钮
+        TextView sendBtn = createDialogButton(context, "发送", true);
+        sendBtn.setOnClickListener(v -> {
+            String modifiedText = editText.getText().toString().trim();
+            if (!modifiedText.isEmpty()) {
+                sendMessage(context, modifiedText, chatMessage);
+                if (dialogRef[0] != null) dialogRef[0].dismiss();
+            } else {
+                Toast.makeText(context, "内容不能为空", Toast.LENGTH_SHORT).show();
+            }
+        });
+        buttonContainer.addView(sendBtn);
+        
+        dialogContainer.addView(buttonContainer);
+        
+        // 将对话框添加到遮罩层
+        overlay.addView(dialogContainer);
+        
+        // 点击遮罩层关闭对话框
+        overlay.setOnClickListener(v -> {
+            if (dialogRef[0] != null) dialogRef[0].dismiss();
+        });
+        
+        // 阻止点击对话框时关闭
+        dialogContainer.setOnClickListener(v -> {});
+        
+        // 创建 Dialog
+        android.app.Dialog dialog = new android.app.Dialog(context, android.R.style.Theme_Translucent_NoTitleBar);
+        dialog.setContentView(overlay);
+        dialog.setCancelable(true);
+        dialog.setCanceledOnTouchOutside(true);
+        dialogRef[0] = dialog;
+        
+        // 设置 Enter 键发送
+        editText.setOnEditorActionListener((v, actionId, event) -> {
+            if (actionId == android.view.inputmethod.EditorInfo.IME_ACTION_SEND || 
+                actionId == android.view.inputmethod.EditorInfo.IME_ACTION_DONE) {
+                String modifiedText = editText.getText().toString().trim();
+                if (!modifiedText.isEmpty()) {
+                    sendMessage(context, modifiedText, chatMessage);
+                    dialog.dismiss();
+                }
+                return true;
+            }
+            return false;
+        });
+        
+        dialog.show();
+        
+        // 自动显示键盘
+        editText.requestFocus();
+        if (dialog.getWindow() != null) {
+            dialog.getWindow().setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_VISIBLE);
+        }
+    }
+    
+    /**
+     * 创建对话框背景（白色圆角）
+     */
+    private static android.graphics.drawable.Drawable createDialogBackground() {
+        android.graphics.drawable.GradientDrawable drawable = new android.graphics.drawable.GradientDrawable();
+        drawable.setShape(android.graphics.drawable.GradientDrawable.RECTANGLE);
+        drawable.setColor(Color.WHITE);
+        drawable.setCornerRadius(24); // 12dp 圆角
+        return drawable;
+    }
+    
+    /**
+     * 创建输入框背景（浅灰色圆角边框）
+     */
+    private static android.graphics.drawable.Drawable createInputBackground() {
+        android.graphics.drawable.GradientDrawable drawable = new android.graphics.drawable.GradientDrawable();
+        drawable.setShape(android.graphics.drawable.GradientDrawable.RECTANGLE);
+        drawable.setColor(Color.parseColor("#F5F5F5"));
+        drawable.setCornerRadius(16); // 8dp 圆角
+        drawable.setStroke(2, Color.parseColor("#E0E0E0")); // 1dp 边框
+        return drawable;
+    }
+    
+    /**
+     * 创建对话框按钮
+     * @param context 上下文
+     * @param text 按钮文字
+     * @param isPrimary 是否为主按钮（发送按钮）
+     */
+    private static TextView createDialogButton(Context context, String text, boolean isPrimary) {
+        TextView button = new TextView(context);
+        button.setText(text);
+        button.setTextSize(15);
+        button.setGravity(Gravity.CENTER);
+        button.setPadding(dp2px(context, 20), dp2px(context, 10), dp2px(context, 20), dp2px(context, 10));
+        
+        android.graphics.drawable.GradientDrawable bg = new android.graphics.drawable.GradientDrawable();
+        bg.setShape(android.graphics.drawable.GradientDrawable.RECTANGLE);
+        bg.setCornerRadius(dp2px(context, 20)); // 圆角按钮
+        
+        if (isPrimary) {
+            // 主按钮：蓝色背景，白色文字
+            bg.setColor(Color.parseColor("#4A90D9"));
+            button.setTextColor(Color.WHITE);
+        } else {
+            // 次按钮：透明背景，灰色文字
+            bg.setColor(Color.TRANSPARENT);
+            button.setTextColor(Color.parseColor("#666666"));
+        }
+        
+        button.setBackgroundDrawable(bg);
+        button.setClickable(true);
+        button.setFocusable(true);
+        
+        return button;
     }
     
     // ========== QQNT Architecture Hook ==========
@@ -1479,6 +1758,48 @@ public class MessageInterceptor {
         drawable.setColor(color);
         drawable.setCornerRadius(radiusPx);
         return drawable;
+    }
+
+    /**
+     * 将颜色加深指定比例
+     * @param color 原始颜色
+     * @param factor 加深因子 (0.0-1.0)，例如 0.1 表示加深 10%
+     * @return 加深后的颜色
+     */
+    private static int darkenColor(int color, float factor) {
+        int a = Color.alpha(color);
+        int r = Math.max(0, (int) (Color.red(color) * (1 - factor)));
+        int g = Math.max(0, (int) (Color.green(color) * (1 - factor)));
+        int b = Math.max(0, (int) (Color.blue(color) * (1 - factor)));
+        return Color.argb(a, r, g, b);
+    }
+
+    /**
+     * 创建带按压状态的圆角背景
+     * 普通状态使用原始颜色，按压状态使用加深的颜色
+     * @param color 背景颜色
+     * @param radiusPx 圆角半径（像素）
+     * @return StateListDrawable
+     */
+    private static android.graphics.drawable.Drawable getSelectableRoundedBackground(int color, int radiusPx) {
+        // 创建普通状态背景
+        android.graphics.drawable.GradientDrawable normalDrawable = new android.graphics.drawable.GradientDrawable();
+        normalDrawable.setShape(android.graphics.drawable.GradientDrawable.RECTANGLE);
+        normalDrawable.setColor(color);
+        normalDrawable.setCornerRadius(radiusPx);
+        
+        // 创建按压状态背景（颜色加深 10%）
+        android.graphics.drawable.GradientDrawable pressedDrawable = new android.graphics.drawable.GradientDrawable();
+        pressedDrawable.setShape(android.graphics.drawable.GradientDrawable.RECTANGLE);
+        pressedDrawable.setColor(darkenColor(color, 0.1f));
+        pressedDrawable.setCornerRadius(radiusPx);
+        
+        // 创建 StateListDrawable
+        android.graphics.drawable.StateListDrawable stateListDrawable = new android.graphics.drawable.StateListDrawable();
+        stateListDrawable.addState(new int[]{android.R.attr.state_pressed}, pressedDrawable);
+        stateListDrawable.addState(new int[]{}, normalDrawable);
+        
+        return stateListDrawable;
     }
 
     // 辅助方法：判断类是否是 RecyclerView 或其子类

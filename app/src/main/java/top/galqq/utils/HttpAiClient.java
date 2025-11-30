@@ -31,6 +31,7 @@ import top.galqq.config.ConfigManager;
 public class HttpAiClient {
 
     private static final String TAG = "GalQQ.AI";
+    private static final int MAX_RETRY_COUNT = 5; // 最大重试次数
     private static OkHttpClient client;
     private static Handler mainHandler = new Handler(Looper.getMainLooper());
 
@@ -51,10 +52,93 @@ public class HttpAiClient {
     }
 
     /**
+     * 扩展回调接口 - 支持重试失败后显示重新加载按钮
+     */
+    public interface AiCallbackWithRetry extends AiCallback {
+        /**
+         * 所有重试都失败后调用，提供重新加载的Runnable
+         * @param retryAction 点击"重新加载"按钮时执行的动作
+         */
+        void onAllRetriesFailed(Runnable retryAction);
+    }
+
+    /**
      * 获取AI生成的回复选项（无上下文和元数据，向后兼容）
      */
     public static void fetchOptions(Context context, String userMessage, AiCallback callback) {
         fetchOptions(context, userMessage, null, 0, null, callback);
+    }
+
+    /**
+     * 获取AI生成的回复选项（带自动重试功能）
+     * 格式错误时自动重试，最多重试MAX_RETRY_COUNT次
+     * 
+     * @param context Android上下文
+     * @param userMessage 当前用户消息内容
+     * @param currentSenderName 当前消息发送人昵称
+     * @param currentTimestamp 当前消息时间戳
+     * @param contextMessages 历史上下文消息（可为null）
+     * @param callback 支持重试的回调
+     */
+    public static void fetchOptionsWithRetry(Context context, String userMessage,
+                                              String currentSenderName, long currentTimestamp,
+                                              List<top.galqq.utils.MessageContextManager.ChatMessage> contextMessages,
+                                              AiCallbackWithRetry callback) {
+        fetchOptionsWithRetryInternal(context, userMessage, currentSenderName, currentTimestamp, 
+                                       contextMessages, callback, 0);
+    }
+
+    /**
+     * 内部重试实现
+     */
+    private static void fetchOptionsWithRetryInternal(Context context, String userMessage,
+                                                       String currentSenderName, long currentTimestamp,
+                                                       List<top.galqq.utils.MessageContextManager.ChatMessage> contextMessages,
+                                                       AiCallbackWithRetry callback, int retryCount) {
+        
+        // 创建重试动作
+        Runnable retryAction = () -> {
+            Log.d(TAG, "用户点击重新加载");
+            fetchOptionsWithRetryInternal(context, userMessage, currentSenderName, currentTimestamp,
+                                          contextMessages, callback, 0);
+        };
+
+        fetchOptionsInternal(context, userMessage, currentSenderName, currentTimestamp, 
+                            contextMessages, new AiCallback() {
+            @Override
+            public void onSuccess(List<String> options) {
+                callback.onSuccess(options);
+            }
+
+            @Override
+            public void onFailure(Exception e) {
+                // 检查是否是格式错误（可重试的错误）
+                boolean isFormatError = e.getMessage() != null && 
+                    (e.getMessage().contains("格式") || e.getMessage().contains("选项不足"));
+                
+                if (isFormatError && retryCount < MAX_RETRY_COUNT - 1) {
+                    // 还有重试机会，静默重试
+                    int nextRetry = retryCount + 1;
+                    Log.d(TAG, "格式错误，自动重试 (" + nextRetry + "/" + MAX_RETRY_COUNT + ")");
+                    
+                    // 延迟500ms后重试，避免请求过快
+                    mainHandler.postDelayed(() -> {
+                        fetchOptionsWithRetryInternal(context, userMessage, currentSenderName, 
+                                                      currentTimestamp, contextMessages, callback, nextRetry);
+                    }, 500);
+                } else if (isFormatError) {
+                    // 达到最大重试次数，通知显示重新加载按钮
+                    Log.w(TAG, "达到最大重试次数 (" + MAX_RETRY_COUNT + ")，显示重新加载按钮");
+                    logError(context, ConfigManager.getAiProvider(), ConfigManager.getAiModel(), 
+                            ConfigManager.getApiUrl(), 
+                            "AI返回格式错误，已重试" + MAX_RETRY_COUNT + "次仍失败");
+                    callback.onAllRetriesFailed(retryAction);
+                } else {
+                    // 非格式错误（如网络错误），直接失败
+                    callback.onFailure(e);
+                }
+            }
+        }, retryCount > 0); // 重试时不显示Toast
     }
 
     /**
@@ -71,6 +155,25 @@ public class HttpAiClient {
                                     String currentSenderName, long currentTimestamp,
                                     List<top.galqq.utils.MessageContextManager.ChatMessage> contextMessages,
                                     AiCallback callback) {
+        fetchOptionsInternal(context, userMessage, currentSenderName, currentTimestamp, 
+                            contextMessages, callback, false);
+    }
+
+    /**
+     * 内部实现 - 获取AI生成的回复选项
+     * 
+     * @param context Android上下文
+     * @param userMessage 当前用户消息内容
+     * @param currentSenderName 当前消息发送人昵称
+     * @param currentTimestamp 当前消息时间戳
+     * @param contextMessages 历史上下文消息（可为null）
+     * @param callback 回调
+     * @param suppressToast 是否抑制Toast提示（重试时使用）
+     */
+    private static void fetchOptionsInternal(Context context, String userMessage,
+                                    String currentSenderName, long currentTimestamp,
+                                    List<top.galqq.utils.MessageContextManager.ChatMessage> contextMessages,
+                                    AiCallback callback, boolean suppressToast) {
         String apiUrl = ConfigManager.getApiUrl();
         String apiKey = ConfigManager.getApiKey();
         String sysPrompt = ConfigManager.getSysPrompt();
@@ -181,7 +284,9 @@ public class HttpAiClient {
                     String error = e.getMessage();
                     Log.e(TAG, "AI请求失败: " + error, e);
                     logError(context, provider, model, apiUrl, error);
-                    showToast(context, "网络连接失败 😢");
+                    if (!suppressToast) {
+                        showToast(context, "网络连接失败 😢");
+                    }
                     callback.onFailure(e);
                 }
 
@@ -205,7 +310,9 @@ public class HttpAiClient {
                             
                             // 其他错误正常处理
                             logError(context, provider, model, apiUrl, error + "\n" + responseBody);
-                            showToast(context, "AI服务暂时不可用 😢");
+                            if (!suppressToast) {
+                                showToast(context, "AI服务暂时不可用 😢");
+                            }
                             callback.onFailure(new IOException(error));
                             return;
                         }
@@ -217,9 +324,24 @@ public class HttpAiClient {
                         List<String> options = parseJsonResponse(responseBody);
                         
                         if (options == null || options.size() < 3) {
-                            String error = "AI返回格式错误或选项不足";
-                            logError(context, provider, model, apiUrl, error + "\n响应: " + responseBody);
-                            showToast(context, "AI返回格式错误 😢");
+                            // 改进的错误日志记录
+                            int actualCount = options != null ? options.size() : 0;
+                            String error;
+                            if (options == null) {
+                                error = "AI返回格式无法识别，请检查系统提示词配置";
+                            } else {
+                                error = "AI返回选项不足: 期望3个，实际" + actualCount + "个";
+                            }
+                            
+                            // 重试时不记录详细日志，避免日志过多
+                            if (!suppressToast) {
+                                String fullLog = error + "\n" +
+                                    "=== 原始响应内容 ===\n" + responseBody + "\n" +
+                                    "=== 响应内容结束 ===\n" +
+                                    "提示: 如果AI返回格式不正确，请检查系统提示词是否要求返回JSON格式";
+                                logError(context, provider, model, apiUrl, fullLog);
+                                showToast(context, "AI返回格式错误 😢");
+                            }
                             callback.onFailure(new Exception(error));
                             return;
                         }
@@ -231,8 +353,10 @@ public class HttpAiClient {
                     } catch (Exception e) {
                         Log.e(TAG, "解析失败", e);
                         String error = "解析错误: " + e.getMessage();
-                        logError(context, provider, model, apiUrl, error + "\n响应: " + responseBody);
-                        showToast(context, "AI返回格式错误 😢");
+                        if (!suppressToast) {
+                            logError(context, provider, model, apiUrl, error + "\n响应: " + responseBody);
+                            showToast(context, "AI返回格式错误 😢");
+                        }
                         callback.onFailure(e);
                     } finally {
                         response.close();
@@ -243,28 +367,40 @@ public class HttpAiClient {
         } catch (Exception e) {
             Log.e(TAG, "请求构建失败", e);
             logError(context, provider, model, apiUrl, "请求构建失败: " + e.getMessage());
-            showToast(context, "AI请求失败 😢");
+            if (!suppressToast) {
+                showToast(context, "AI请求失败 😢");
+            }
             callback.onFailure(e);
         }
     }
 
     /**
-     * 解析JSON格式的AI响应
-     * 支持两种格式：
-     * 1. 直接返回 {"options": ["...", "...", "..."]}
-     * 2. OpenAI格式 {"choices": [{"message": {"content": "{\"options\": [...]}"}}]}
+     * 解析JSON格式的AI响应（重构版）
+     * 支持多种格式的智能解析，按优先级依次尝试：
+     * 1. 直接JSON格式（响应本身就是options JSON）
+     * 2. OpenAI标准格式（choices[0].message.content）
+     * 3. 从content中提取：Markdown代码块、混合文本JSON、列表、纯文本
      */
     private static List<String> parseJsonResponse(String responseBody) {
+        // 边界情况处理
+        if (responseBody == null || responseBody.trim().isEmpty()) {
+            Log.w(TAG, "响应为空");
+            return null;
+        }
+        
+        List<String> result = null;
+        
         try {
             JSONObject jsonResponse = new JSONObject(responseBody);
             
-            // 方式1: 直接包含options字段
-            if (jsonResponse.has("options")) {
-                JSONArray optionsArray = jsonResponse.getJSONArray("options");
-                return jsonArrayToList(optionsArray);
+            // 策略1: 直接包含options等字段
+            result = parseOptionsJson(responseBody);
+            if (result != null && result.size() >= 3) {
+                Log.d(TAG, "解析成功: 直接JSON格式");
+                return result;
             }
             
-            // 方式2: OpenAI标准格式
+            // 策略2: OpenAI标准格式
             if (jsonResponse.has("choices")) {
                 JSONArray choices = jsonResponse.getJSONArray("choices");
                 if (choices.length() > 0) {
@@ -272,25 +408,88 @@ public class HttpAiClient {
                             .getJSONObject("message")
                             .getString("content");
                     
-                    // content可能是JSON字符串
-                    try {
-                        JSONObject contentJson = new JSONObject(content);
-                        if (contentJson.has("options")) {
-                            JSONArray optionsArray = contentJson.getJSONArray("options");
-                            return jsonArrayToList(optionsArray);
-                        }
-                    } catch (Exception e) {
-                        // content不是JSON，可能是旧格式的|||分隔
-                        return parseLegacyFormat(content);
+                    // 从content中尝试多种解析策略
+                    result = parseContentWithStrategies(content);
+                    if (result != null && result.size() >= 3) {
+                        return result;
                     }
                 }
             }
             
-            return null;
         } catch (Exception e) {
-            Log.e(TAG, "JSON解析失败", e);
+            // 响应本身不是有效JSON，尝试作为纯文本解析
+            Log.d(TAG, "响应不是标准JSON，尝试其他解析策略");
+            result = parseContentWithStrategies(responseBody);
+            if (result != null && result.size() >= 3) {
+                return result;
+            }
+        }
+        
+        Log.w(TAG, "所有解析策略均失败，请检查系统提示词配置");
+        return null;
+    }
+
+    /**
+     * 使用多种策略解析content内容
+     * @param content AI返回的content字符串
+     * @return 解析出的选项列表
+     */
+    private static List<String> parseContentWithStrategies(String content) {
+        if (content == null || content.trim().isEmpty()) {
             return null;
         }
+        
+        List<String> result = null;
+        
+        // 策略A: 直接作为JSON解析（支持多种字段名）
+        result = parseOptionsJson(content);
+        if (result != null && result.size() >= 3) {
+            Log.d(TAG, "解析成功: content直接JSON");
+            return result;
+        }
+        
+        // 策略B: 从Markdown代码块中提取JSON
+        String markdownJson = extractJsonFromMarkdown(content);
+        if (markdownJson != null) {
+            result = parseOptionsJson(markdownJson);
+            if (result != null && result.size() >= 3) {
+                Log.d(TAG, "解析成功: Markdown代码块");
+                return result;
+            }
+        }
+        
+        // 策略C: 从混合文本中提取JSON
+        String textJson = extractJsonFromText(content);
+        if (textJson != null) {
+            result = parseOptionsJson(textJson);
+            if (result != null && result.size() >= 3) {
+                Log.d(TAG, "解析成功: 混合文本JSON");
+                return result;
+            }
+        }
+        
+        // 策略D: 旧格式（|||分隔）
+        result = parseLegacyFormat(content);
+        if (result != null && result.size() >= 3) {
+            Log.d(TAG, "解析成功: |||分隔格式");
+            return result;
+        }
+        
+        // 策略E: 编号/项目符号列表
+        result = parseNumberedList(content);
+        if (result != null && result.size() >= 3) {
+            Log.d(TAG, "解析成功: 编号列表格式");
+            return result;
+        }
+        
+        // 策略F: 纯文本行
+        result = parsePlainLines(content);
+        if (result != null && result.size() >= 3) {
+            Log.d(TAG, "解析成功: 纯文本行格式");
+            return result;
+        }
+        
+        return null;
     }
 
     /**
@@ -319,6 +518,167 @@ public class HttpAiClient {
                 result.add(trimmed);
             }
         }
+        return result.size() >= 3 ? result : null;
+    }
+
+    // ==================== 新增解析辅助方法 ====================
+
+    /**
+     * 从markdown代码块中提取JSON
+     * 支持格式：```json ... ``` 或 ``` ... ```
+     * @param content 包含markdown代码块的内容
+     * @return 提取的JSON字符串，如果没有找到则返回null
+     */
+    private static String extractJsonFromMarkdown(String content) {
+        if (content == null || content.isEmpty()) {
+            return null;
+        }
+        
+        // 匹配 ```json ... ``` 或 ``` ... ``` 格式
+        // 使用非贪婪匹配，取第一个代码块
+        java.util.regex.Pattern pattern = java.util.regex.Pattern.compile(
+            "```(?:json)?\\s*\\n?([\\s\\S]*?)\\n?```",
+            java.util.regex.Pattern.CASE_INSENSITIVE
+        );
+        java.util.regex.Matcher matcher = pattern.matcher(content);
+        
+        if (matcher.find()) {
+            String extracted = matcher.group(1);
+            if (extracted != null) {
+                return extracted.trim();
+            }
+        }
+        
+        return null;
+    }
+
+    /**
+     * 从混合文本中提取JSON对象
+     * 查找第一个 { 和最后一个匹配的 } 之间的内容
+     * @param content 可能包含JSON的混合文本
+     * @return 提取的JSON字符串，如果没有找到则返回null
+     */
+    private static String extractJsonFromText(String content) {
+        if (content == null || content.isEmpty()) {
+            return null;
+        }
+        
+        int firstBrace = content.indexOf('{');
+        if (firstBrace == -1) {
+            return null;
+        }
+        
+        // 找到匹配的闭合大括号（处理嵌套）
+        int depth = 0;
+        int lastBrace = -1;
+        for (int i = firstBrace; i < content.length(); i++) {
+            char c = content.charAt(i);
+            if (c == '{') {
+                depth++;
+            } else if (c == '}') {
+                depth--;
+                if (depth == 0) {
+                    lastBrace = i;
+                    break;
+                }
+            }
+        }
+        
+        if (lastBrace == -1) {
+            return null;
+        }
+        
+        return content.substring(firstBrace, lastBrace + 1);
+    }
+
+    /**
+     * 解析options JSON对象
+     * 支持多种字段名：options, choices, replies, answers, responses
+     * @param jsonStr JSON字符串
+     * @return 选项列表，如果解析失败返回null
+     */
+    private static List<String> parseOptionsJson(String jsonStr) {
+        if (jsonStr == null || jsonStr.isEmpty()) {
+            return null;
+        }
+        
+        try {
+            JSONObject json = new JSONObject(jsonStr);
+            
+            // 尝试多种字段名
+            String[] fieldNames = {"options", "choices", "replies", "answers", "responses"};
+            for (String fieldName : fieldNames) {
+                if (json.has(fieldName)) {
+                    Object value = json.get(fieldName);
+                    if (value instanceof JSONArray) {
+                        return jsonArrayToList((JSONArray) value);
+                    }
+                }
+            }
+            
+            return null;
+        } catch (Exception e) {
+            Log.d(TAG, "parseOptionsJson失败: " + e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * 解析编号/项目符号列表
+     * 支持格式：1. xxx, 1、xxx, 1) xxx, - xxx, * xxx, • xxx
+     * @param content 列表文本
+     * @return 选项列表，如果解析失败返回null
+     */
+    private static List<String> parseNumberedList(String content) {
+        if (content == null || content.isEmpty()) {
+            return null;
+        }
+        
+        List<String> result = new ArrayList<>();
+        String[] lines = content.split("\\n");
+        
+        // 匹配编号或项目符号的正则
+        java.util.regex.Pattern pattern = java.util.regex.Pattern.compile(
+            "^\\s*(?:\\d+[.、)\\]]|[-*•])\\s*(.+)$"
+        );
+        
+        for (String line : lines) {
+            java.util.regex.Matcher matcher = pattern.matcher(line);
+            if (matcher.find()) {
+                String item = matcher.group(1);
+                if (item != null) {
+                    item = item.trim();
+                    if (!item.isEmpty()) {
+                        result.add(item);
+                    }
+                }
+            }
+        }
+        
+        return result.size() >= 3 ? result : null;
+    }
+
+    /**
+     * 解析纯文本行
+     * 将非空行作为选项
+     * @param content 文本内容
+     * @return 选项列表，如果行数不足返回null
+     */
+    private static List<String> parsePlainLines(String content) {
+        if (content == null || content.isEmpty()) {
+            return null;
+        }
+        
+        List<String> result = new ArrayList<>();
+        String[] lines = content.split("\\n");
+        
+        for (String line : lines) {
+            String trimmed = line.trim();
+            if (!trimmed.isEmpty()) {
+                result.add(trimmed);
+            }
+        }
+        
         return result.size() >= 3 ? result : null;
     }
 

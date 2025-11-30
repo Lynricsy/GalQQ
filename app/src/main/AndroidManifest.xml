@@ -25,16 +25,25 @@
             android:name="xposed.icon"
             android:resource="@drawable/ic_xposed" />
 
+        <!-- ModuleInfoActivity - LSPosed 入口，显示模块介绍界面 -->
+        <activity
+            android:name=".ui.ModuleInfoActivity"
+            android:label="GalQQ"
+            android:exported="true"
+            android:theme="@style/Theme.GalQQ.DayNight">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="de.robv.android.xposed.category.MODULE_SETTINGS" />
+            </intent-filter>
+        </activity>
+
+        <!-- SettingsUiFragmentHostActivity - QQ 内部设置入口（不再作为 LSPosed 入口） -->
         <activity
             android:name=".ui.SettingsUiFragmentHostActivity"
             android:label="GalQQ Settings"
             android:icon="@mipmap/ic_launcher"
             android:exported="true"
             android:theme="@style/Theme.AppCompat.DayNight.NoActionBar">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="de.robv.android.xposed.category.MODULE_SETTINGS" />
-            </intent-filter>
         </activity>
         
         <activity
@@ -46,6 +55,12 @@
         <activity
             android:name=".ui.AiMonitorActivity"
             android:label="AI Monitor"
+            android:exported="false"
+            android:theme="@style/Theme.AppCompat.DayNight" />
+            
+        <activity
+            android:name=".ui.PromptManagerActivity"
+            android:label="提示词管理"
             android:exported="false"
             android:theme="@style/Theme.AppCompat.DayNight" />
     </application>
