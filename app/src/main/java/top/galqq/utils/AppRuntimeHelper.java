@@ -23,122 +23,122 @@ public class AppRuntimeHelper {
      */
     public static Object getAppRuntime(Context context) {
         try {
-            XposedBridge.log("GalQQ.AppRuntimeHelper: ===== 开始获取AppRuntime =====");
+            // XposedBridge.log("GalQQ.AppRuntimeHelper: ===== 开始获取AppRuntime =====");
             
             // 确保Initiator已初始化
             if (Initiator.getHostClassLoader() == null) {
-                XposedBridge.log("GalQQ.AppRuntimeHelper: Initiator未初始化，开始初始化");
+                // XposedBridge.log("GalQQ.AppRuntimeHelper: Initiator未初始化，开始初始化");
                 Initiator.init(context.getClassLoader());
-                XposedBridge.log("GalQQ.AppRuntimeHelper: Initiator初始化完成，ClassLoader: " + context.getClassLoader().getClass().getName());
+                // XposedBridge.log("GalQQ.AppRuntimeHelper: Initiator初始化完成，ClassLoader: " + context.getClassLoader().getClass().getName());
             } else {
-                XposedBridge.log("GalQQ.AppRuntimeHelper: Initiator已初始化，当前ClassLoader: " + Initiator.getHostClassLoader().getClass().getName());
+                // XposedBridge.log("GalQQ.AppRuntimeHelper: Initiator已初始化，当前ClassLoader: " + Initiator.getHostClassLoader().getClass().getName());
             }
             
             // 检查必要的类是否已加载
             if (Initiator._MobileQQ == null) {
-                XposedBridge.log("GalQQ.AppRuntimeHelper: MobileQQ类未加载，尝试加载");
+                // XposedBridge.log("GalQQ.AppRuntimeHelper: MobileQQ类未加载，尝试加载");
                 Initiator._MobileQQ = Initiator.load("mqq.app.MobileQQ");
-                XposedBridge.log("GalQQ.AppRuntimeHelper: MobileQQ类加载结果: " + (Initiator._MobileQQ != null ? "成功" : "失败"));
+                // XposedBridge.log("GalQQ.AppRuntimeHelper: MobileQQ类加载结果: " + (Initiator._MobileQQ != null ? "成功" : "失败"));
             } else {
-                XposedBridge.log("GalQQ.AppRuntimeHelper: MobileQQ类已加载");
+                // XposedBridge.log("GalQQ.AppRuntimeHelper: MobileQQ类已加载");
             }
             
             if (Initiator._MobileQQ == null) {
-                XposedBridge.log("GalQQ.AppRuntimeHelper: 错误: 无法加载MobileQQ类");
+                // XposedBridge.log("GalQQ.AppRuntimeHelper: 错误: 无法加载MobileQQ类");
                 return null;
             }
             
             // 尝试加载AppRuntime类，但不强制要求成功
             if (Initiator._AppRuntime == null) {
-                XposedBridge.log("GalQQ.AppRuntimeHelper: AppRuntime类未加载，尝试加载");
+                // XposedBridge.log("GalQQ.AppRuntimeHelper: AppRuntime类未加载，尝试加载");
                 Initiator._AppRuntime = Initiator.load("mqq.app.AppRuntime");
                 if (Initiator._AppRuntime != null) {
-                    XposedBridge.log("GalQQ.AppRuntimeHelper: AppRuntime类加载成功");
+                    // XposedBridge.log("GalQQ.AppRuntimeHelper: AppRuntime类加载成功");
                 } else {
-                    XposedBridge.log("GalQQ.AppRuntimeHelper: 警告: AppRuntime类加载失败，将使用字符串方式获取字段");
+                    // XposedBridge.log("GalQQ.AppRuntimeHelper: 警告: AppRuntime类加载失败，将使用字符串方式获取字段");
                 }
             } else {
-                XposedBridge.log("GalQQ.AppRuntimeHelper: AppRuntime类已加载");
+                // XposedBridge.log("GalQQ.AppRuntimeHelper: AppRuntime类已加载");
             }
             
-            XposedBridge.log("GalQQ.AppRuntimeHelper: 尝试获取MobileQQ.sMobileQQ静态字段");
+            // XposedBridge.log("GalQQ.AppRuntimeHelper: 尝试获取MobileQQ.sMobileQQ静态字段");
             
             // 获取MobileQQ.sMobileQQ静态实例
             Object mobileQQInstance = Initiator.getStaticObject("mqq.app.MobileQQ", "sMobileQQ");
             if (mobileQQInstance == null) {
-                XposedBridge.log("GalQQ.AppRuntimeHelper: 错误: 无法获取MobileQQ.sMobileQQ实例");
+                // XposedBridge.log("GalQQ.AppRuntimeHelper: 错误: 无法获取MobileQQ.sMobileQQ实例");
                 return null;
             }
             
-            XposedBridge.log("GalQQ.AppRuntimeHelper: 成功获取MobileQQ.sMobileQQ实例: " + mobileQQInstance.getClass().getName());
-            XposedBridge.log("GalQQ.AppRuntimeHelper: MobileQQ实例类加载器: " + mobileQQInstance.getClass().getClassLoader().getClass().getName());
+            // XposedBridge.log("GalQQ.AppRuntimeHelper: 成功获取MobileQQ.sMobileQQ实例: " + mobileQQInstance.getClass().getName());
+            // XposedBridge.log("GalQQ.AppRuntimeHelper: MobileQQ实例类加载器: " + mobileQQInstance.getClass().getClassLoader().getClass().getName());
             
             // 模仿QAuxiliary的方式：通过MobileQQ.sMobileQQ获取mAppRuntime字段
             // 尝试使用反射获取字段，即使AppRuntime类加载失败也能工作
             Field mAppRuntimeField = null;
             if (f_mAppRuntime == null) {
-                XposedBridge.log("GalQQ.AppRuntimeHelper: 首次获取mAppRuntime字段，进行反射");
+                // XposedBridge.log("GalQQ.AppRuntimeHelper: 首次获取mAppRuntime字段，进行反射");
                 
                 try {
                     // 尝试使用已加载的AppRuntime类获取字段
                     if (Initiator._AppRuntime != null) {
                         f_mAppRuntime = Initiator._MobileQQ.getDeclaredField("mAppRuntime");
                         f_mAppRuntime.setAccessible(true);
-                        XposedBridge.log("GalQQ.AppRuntimeHelper: 成功获取mAppRuntime字段引用(使用AppRuntime类)");
+                        // XposedBridge.log("GalQQ.AppRuntimeHelper: 成功获取mAppRuntime字段引用(使用AppRuntime类)");
                     } else {
                         // 如果AppRuntime类加载失败，尝试通过字段名获取
-                        XposedBridge.log("GalQQ.AppRuntimeHelper: AppRuntime类未加载，尝试通过字段名获取mAppRuntime字段");
+                        // XposedBridge.log("GalQQ.AppRuntimeHelper: AppRuntime类未加载，尝试通过字段名获取mAppRuntime字段");
                         Field[] fields = Initiator._MobileQQ.getDeclaredFields();
                         for (Field field : fields) {
                             if ("mAppRuntime".equals(field.getName())) {
                                 f_mAppRuntime = field;
                                 f_mAppRuntime.setAccessible(true);
-                                XposedBridge.log("GalQQ.AppRuntimeHelper: 成功获取mAppRuntime字段引用(通过字段名)");
+                                // XposedBridge.log("GalQQ.AppRuntimeHelper: 成功获取mAppRuntime字段引用(通过字段名)");
                                 break;
                             }
                         }
                         
                         if (f_mAppRuntime == null) {
-                            XposedBridge.log("GalQQ.AppRuntimeHelper: 错误: 无法找到mAppRuntime字段");
+                            // XposedBridge.log("GalQQ.AppRuntimeHelper: 错误: 无法找到mAppRuntime字段");
                             return null;
                         }
                     }
                 } catch (NoSuchFieldException e) {
-                    XposedBridge.log("GalQQ.AppRuntimeHelper: 错误: 找不到mAppRuntime字段: " + e.getMessage());
+                    // XposedBridge.log("GalQQ.AppRuntimeHelper: 错误: 找不到mAppRuntime字段: " + e.getMessage());
                     return null;
                 } catch (SecurityException e) {
-                    XposedBridge.log("GalQQ.AppRuntimeHelper: 安全错误: 无法访问mAppRuntime字段: " + e.getMessage());
+                    // XposedBridge.log("GalQQ.AppRuntimeHelper: 安全错误: 无法访问mAppRuntime字段: " + e.getMessage());
                     return null;
                 }
             } else {
-                XposedBridge.log("GalQQ.AppRuntimeHelper: 使用缓存的mAppRuntime字段引用");
+                // XposedBridge.log("GalQQ.AppRuntimeHelper: 使用缓存的mAppRuntime字段引用");
             }
             
             try {
-                XposedBridge.log("GalQQ.AppRuntimeHelper: 尝试从MobileQQ实例获取mAppRuntime字段值");
+                // XposedBridge.log("GalQQ.AppRuntimeHelper: 尝试从MobileQQ实例获取mAppRuntime字段值");
                 
                 Object appRuntime = f_mAppRuntime.get(mobileQQInstance);
                 if (appRuntime != null) {
-                    XposedBridge.log("GalQQ.AppRuntimeHelper: 成功获取AppRuntime实例: " + appRuntime.getClass().getName());
-                    XposedBridge.log("GalQQ.AppRuntimeHelper: AppRuntime实例类加载器: " + appRuntime.getClass().getClassLoader().getClass().getName());
+                    // XposedBridge.log("GalQQ.AppRuntimeHelper: 成功获取AppRuntime实例: " + appRuntime.getClass().getName());
+                    // XposedBridge.log("GalQQ.AppRuntimeHelper: AppRuntime实例类加载器: " + appRuntime.getClass().getClassLoader().getClass().getName());
                     return appRuntime;
                 } else {
-                    XposedBridge.log("GalQQ.AppRuntimeHelper: 错误: MobileQQ.sMobileQQ.mAppRuntime为null");
+                    // XposedBridge.log("GalQQ.AppRuntimeHelper: 错误: MobileQQ.sMobileQQ.mAppRuntime为null");
                     return null;
                 }
             } catch (IllegalAccessException e) {
-                XposedBridge.log("GalQQ.AppRuntimeHelper: 错误: 无法访问mAppRuntime字段: " + e.getMessage());
+                // XposedBridge.log("GalQQ.AppRuntimeHelper: 错误: 无法访问mAppRuntime字段: " + e.getMessage());
                 return null;
             }
         } catch (Exception e) {
-            XposedBridge.log("GalQQ.AppRuntimeHelper: 未知错误: " + e.getMessage());
-            XposedBridge.log("GalQQ.AppRuntimeHelper: 错误类型: " + e.getClass().getName());
+            // XposedBridge.log("GalQQ.AppRuntimeHelper: 未知错误: " + e.getMessage());
+            // XposedBridge.log("GalQQ.AppRuntimeHelper: 错误类型: " + e.getClass().getName());
             
             // 打印详细的堆栈跟踪
             StackTraceElement[] stackTrace = e.getStackTrace();
-            XposedBridge.log("GalQQ.AppRuntimeHelper: 堆栈跟踪(前10个元素):");
+            // XposedBridge.log("GalQQ.AppRuntimeHelper: 堆栈跟踪(前10个元素):");
             for (int i = 0; i < Math.min(10, stackTrace.length); i++) {
-                XposedBridge.log("GalQQ.AppRuntimeHelper:   " + stackTrace[i].toString());
+                // XposedBridge.log("GalQQ.AppRuntimeHelper:   " + stackTrace[i].toString());
             }
             
             e.printStackTrace();
@@ -158,27 +158,27 @@ public class AppRuntimeHelper {
         }
         
         try {
-            XposedBridge.log("GalQQ.AppRuntimeHelper: ===== 开始从对象提取AppRuntime =====");
+            // XposedBridge.log("GalQQ.AppRuntimeHelper: ===== 开始从对象提取AppRuntime =====");
             
             // 确保Initiator已初始化
             if (Initiator.getHostClassLoader() == null) {
-                XposedBridge.log("GalQQ.AppRuntimeHelper: Initiator未初始化，无法提取AppRuntime");
+                // XposedBridge.log("GalQQ.AppRuntimeHelper: Initiator未初始化，无法提取AppRuntime");
                 return null;
             }
             
             // 不使用Reflex.getFirstNSFByType避免传递AppRuntime Class对象
             // 改为手动遍历字段，查找类型为"mqq.app.AppRuntime"的字段
             Class<?> objClass = obj.getClass();
-            XposedBridge.log("GalQQ.AppRuntimeHelper: 目标对象类型: " + objClass.getName());
+            // XposedBridge.log("GalQQ.AppRuntimeHelper: 目标对象类型: " + objClass.getName());
             
             // 加载AppRuntime类用于类型比较
             Class<?> appRuntimeClass = Initiator.load("mqq.app.AppRuntime");
             if (appRuntimeClass == null) {
-                XposedBridge.log("GalQQ.AppRuntimeHelper: 无法加载AppRuntime类，尝试使用字符串比较");
+                // XposedBridge.log("GalQQ.AppRuntimeHelper: 无法加载AppRuntime类，尝试使用字符串比较");
                 
                 // 如果无法加载AppRuntime类，则使用字符串比较字段类型名
                 while (objClass != null && !objClass.equals(Object.class)) {
-                    XposedBridge.log("GalQQ.AppRuntimeHelper: 检查类: " + objClass.getName());
+                    // XposedBridge.log("GalQQ.AppRuntimeHelper: 检查类: " + objClass.getName());
                     
                     for (java.lang.reflect.Field f : objClass.getDeclaredFields()) {
                         int m = f.getModifiers();
@@ -188,14 +188,14 @@ public class AppRuntimeHelper {
                         
                         // 检查字段类型名是否匹配
                         String fieldTypeName = f.getType().getName();
-                        XposedBridge.log("GalQQ.AppRuntimeHelper: 检查字段: " + f.getName() + ", 类型: " + fieldTypeName);
+                        // XposedBridge.log("GalQQ.AppRuntimeHelper: 检查字段: " + f.getName() + ", 类型: " + fieldTypeName);
                         
                         if ("mqq.app.AppRuntime".equals(fieldTypeName)) {
-                            XposedBridge.log("GalQQ.AppRuntimeHelper: 找到匹配的AppRuntime字段: " + f.getName());
+                            // XposedBridge.log("GalQQ.AppRuntimeHelper: 找到匹配的AppRuntime字段: " + f.getName());
                             f.setAccessible(true);
                             Object appRuntime = f.get(obj);
                             if (appRuntime != null) {
-                                XposedBridge.log("GalQQ.AppRuntimeHelper: 成功提取AppRuntime实例");
+                                // XposedBridge.log("GalQQ.AppRuntimeHelper: 成功提取AppRuntime实例");
                                 return appRuntime;
                             }
                         }
@@ -203,11 +203,11 @@ public class AppRuntimeHelper {
                     objClass = objClass.getSuperclass();
                 }
             } else {
-                XposedBridge.log("GalQQ.AppRuntimeHelper: 成功加载AppRuntime类，使用类型比较");
+                // XposedBridge.log("GalQQ.AppRuntimeHelper: 成功加载AppRuntime类，使用类型比较");
                 
                 // 使用类型比较查找字段
                 while (objClass != null && !objClass.equals(Object.class)) {
-                    XposedBridge.log("GalQQ.AppRuntimeHelper: 检查类: " + objClass.getName());
+                    // XposedBridge.log("GalQQ.AppRuntimeHelper: 检查类: " + objClass.getName());
                     
                     for (java.lang.reflect.Field f : objClass.getDeclaredFields()) {
                         int m = f.getModifiers();
@@ -217,11 +217,11 @@ public class AppRuntimeHelper {
                         
                         // 检查字段类型是否匹配
                         if (f.getType().equals(appRuntimeClass)) {
-                            XposedBridge.log("GalQQ.AppRuntimeHelper: 找到匹配的AppRuntime字段: " + f.getName());
+                            // XposedBridge.log("GalQQ.AppRuntimeHelper: 找到匹配的AppRuntime字段: " + f.getName());
                             f.setAccessible(true);
                             Object appRuntime = f.get(obj);
                             if (appRuntime != null) {
-                                XposedBridge.log("GalQQ.AppRuntimeHelper: 成功提取AppRuntime实例");
+                                // XposedBridge.log("GalQQ.AppRuntimeHelper: 成功提取AppRuntime实例");
                                 return appRuntime;
                             }
                         }
@@ -230,17 +230,17 @@ public class AppRuntimeHelper {
                 }
             }
             
-            XposedBridge.log("GalQQ.AppRuntimeHelper: 未找到AppRuntime字段");
+            // XposedBridge.log("GalQQ.AppRuntimeHelper: 未找到AppRuntime字段");
             return null;
         } catch (Exception e) {
-            XposedBridge.log("GalQQ.AppRuntimeHelper: 提取AppRuntime时发生错误: " + e.getMessage());
-            XposedBridge.log("GalQQ.AppRuntimeHelper: 错误类型: " + e.getClass().getName());
+            // XposedBridge.log("GalQQ.AppRuntimeHelper: 提取AppRuntime时发生错误: " + e.getMessage());
+            // XposedBridge.log("GalQQ.AppRuntimeHelper: 错误类型: " + e.getClass().getName());
             
             // 打印详细的堆栈跟踪
             StackTraceElement[] stackTrace = e.getStackTrace();
-            XposedBridge.log("GalQQ.AppRuntimeHelper: 堆栈跟踪(前10个元素):");
+            // XposedBridge.log("GalQQ.AppRuntimeHelper: 堆栈跟踪(前10个元素):");
             for (int i = 0; i < Math.min(10, stackTrace.length); i++) {
-                XposedBridge.log("GalQQ.AppRuntimeHelper:   " + stackTrace[i].toString());
+                // XposedBridge.log("GalQQ.AppRuntimeHelper:   " + stackTrace[i].toString());
             }
             
             e.printStackTrace();
@@ -275,7 +275,7 @@ public class AppRuntimeHelper {
                 }
             }
         } catch (Exception e) {
-            XposedBridge.log("GalQQ: Failed to get current account uin: " + e.getMessage());
+            // XposedBridge.log("GalQQ: Failed to get current account uin: " + e.getMessage());
         }
         return 0;
     }
@@ -292,7 +292,7 @@ public class AppRuntimeHelper {
                 return (Long) result;
             }
         } catch (Exception e) {
-            XposedBridge.log("GalQQ: Failed to get server time: " + e.getMessage());
+            // XposedBridge.log("GalQQ: Failed to get server time: " + e.getMessage());
         }
         return System.currentTimeMillis();
     }

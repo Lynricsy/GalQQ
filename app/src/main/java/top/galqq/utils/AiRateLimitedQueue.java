@@ -103,9 +103,25 @@ public class AiRateLimitedQueue {
                               List<top.galqq.utils.MessageContextManager.ChatMessage> contextMessages,
                               String currentSenderName, long currentTimestamp,
                               HttpAiClient.AiCallback callback) {
+        submitRequest(context, msgContent, msgId, priority, contextMessages, 
+                     currentSenderName, currentTimestamp, null, null, callback);
+    }
+    
+    /**
+     * 提交AI请求（带优先级、上下文、发送者QQ和自定义提示词）
+     * 
+     * @param senderQQ 发送者QQ号，用于黑白名单过滤
+     * @param customSystemPrompt 自定义系统提示词，如果为null则使用默认
+     */
+    public void submitRequest(Context context, String msgContent, String msgId, Priority priority, 
+                              List<top.galqq.utils.MessageContextManager.ChatMessage> contextMessages,
+                              String currentSenderName, long currentTimestamp,
+                              String senderQQ, String customSystemPrompt,
+                              HttpAiClient.AiCallback callback) {
         PrioritizedRequest request = new PrioritizedRequest(
             context, msgContent, msgId, priority, contextMessages, 
-            currentSenderName, currentTimestamp, callback, System.currentTimeMillis()
+            currentSenderName, currentTimestamp, senderQQ, customSystemPrompt, 
+            callback, System.currentTimeMillis()
         );
         
         boolean added = requestQueue.offer(request);
@@ -258,10 +274,10 @@ public class AiRateLimitedQueue {
                 // 创建重试动作
                 Runnable retryAction = () -> {
                     XposedBridge.log(TAG + ": 用户点击重新加载");
-                    // 重新提交请求
+                    // 重新提交请求（保留senderQQ和customSystemPrompt）
                     submitRequest(request.context, request.msgContent, request.msgId, request.priority,
                                  request.contextMessages, request.currentSenderName, request.currentTimestamp,
-                                 request.callback);
+                                 request.senderQQ, request.customSystemPrompt, request.callback);
                 };
                 mainHandler.post(() -> retryCallback.onAllRetriesFailed(retryAction));
             } else {
@@ -282,26 +298,51 @@ public class AiRateLimitedQueue {
         final Exception[] errorHolder = new Exception[1];
         
         synchronized (lock) {
-            // 异步调用转同步（带上下文）
-            HttpAiClient.fetchOptions(request.context, request.msgContent,
-                                     request.currentSenderName, request.currentTimestamp,
-                                     request.contextMessages, new HttpAiClient.AiCallback() {
-                @Override
-                public void onSuccess(List<String> options) {
-                    synchronized (lock) {
-                        resultHolder[0] = options;
-                        lock.notify();
+            // 异步调用转同步（带上下文和自定义提示词）
+            if (request.customSystemPrompt != null && !request.customSystemPrompt.isEmpty()) {
+                // 使用自定义提示词
+                HttpAiClient.fetchOptionsWithPrompt(request.context, request.msgContent,
+                                         request.currentSenderName, request.currentTimestamp,
+                                         request.contextMessages, request.customSystemPrompt,
+                                         new HttpAiClient.AiCallback() {
+                    @Override
+                    public void onSuccess(List<String> options) {
+                        synchronized (lock) {
+                            resultHolder[0] = options;
+                            lock.notify();
+                        }
                     }
-                }
-                
-                @Override
-                public void onFailure(Exception e) {
-                    synchronized (lock) {
-                        errorHolder[0] = e;
-                        lock.notify();
+                    
+                    @Override
+                    public void onFailure(Exception e) {
+                        synchronized (lock) {
+                            errorHolder[0] = e;
+                            lock.notify();
+                        }
                     }
-                }
-            });
+                });
+            } else {
+                // 使用默认提示词
+                HttpAiClient.fetchOptions(request.context, request.msgContent,
+                                         request.currentSenderName, request.currentTimestamp,
+                                         request.contextMessages, new HttpAiClient.AiCallback() {
+                    @Override
+                    public void onSuccess(List<String> options) {
+                        synchronized (lock) {
+                            resultHolder[0] = options;
+                            lock.notify();
+                        }
+                    }
+                    
+                    @Override
+                    public void onFailure(Exception e) {
+                        synchronized (lock) {
+                            errorHolder[0] = e;
+                            lock.notify();
+                        }
+                    }
+                });
+            }
             
             // 等待结果（最多30秒）
             lock.wait(30000);
@@ -398,12 +439,23 @@ public class AiRateLimitedQueue {
         final List<top.galqq.utils.MessageContextManager.ChatMessage> contextMessages; // 上下文消息
         final String currentSenderName; // 当前消息发送人昵称
         final long currentTimestamp; // 当前消息时间戳
+        final String senderQQ; // 发送者QQ号（用于黑白名单过滤）
+        final String customSystemPrompt; // 自定义系统提示词
         final HttpAiClient.AiCallback callback;
         final long timestamp;  // 同优先级按时间排序
         
         PrioritizedRequest(Context context, String msgContent, String msgId, Priority priority, 
                           List<top.galqq.utils.MessageContextManager.ChatMessage> contextMessages,
                           String currentSenderName, long currentTimestamp,
+                          HttpAiClient.AiCallback callback, long timestamp) {
+            this(context, msgContent, msgId, priority, contextMessages, currentSenderName, 
+                 currentTimestamp, null, null, callback, timestamp);
+        }
+        
+        PrioritizedRequest(Context context, String msgContent, String msgId, Priority priority, 
+                          List<top.galqq.utils.MessageContextManager.ChatMessage> contextMessages,
+                          String currentSenderName, long currentTimestamp,
+                          String senderQQ, String customSystemPrompt,
                           HttpAiClient.AiCallback callback, long timestamp) {
             this.context = context;
             this.msgContent = msgContent;
@@ -412,6 +464,8 @@ public class AiRateLimitedQueue {
             this.contextMessages = contextMessages;
             this.currentSenderName = currentSenderName;
             this.currentTimestamp = currentTimestamp;
+            this.senderQQ = senderQQ;
+            this.customSystemPrompt = customSystemPrompt;
             this.callback = callback;
             this.timestamp = timestamp;
         }

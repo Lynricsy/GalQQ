@@ -104,7 +104,7 @@ public class HttpAiClient {
         };
 
         fetchOptionsInternal(context, userMessage, currentSenderName, currentTimestamp, 
-                            contextMessages, new AiCallback() {
+                            contextMessages, null, new AiCallback() {
             @Override
             public void onSuccess(List<String> options) {
                 callback.onSuccess(options);
@@ -156,7 +156,27 @@ public class HttpAiClient {
                                     List<top.galqq.utils.MessageContextManager.ChatMessage> contextMessages,
                                     AiCallback callback) {
         fetchOptionsInternal(context, userMessage, currentSenderName, currentTimestamp, 
-                            contextMessages, callback, false);
+                            contextMessages, null, callback, false);
+    }
+    
+    /**
+     * 获取AI生成的回复选项（带自定义提示词）
+     * 
+     * @param context Android上下文
+     * @param userMessage 当前用户消息内容
+     * @param currentSenderName 当前消息发送人昵称
+     * @param currentTimestamp 当前消息时间戳
+     * @param contextMessages 历史上下文消息（可为null）
+     * @param customPrompt 自定义提示词内容（如果为null则使用默认）
+     * @param callback 回调
+     */
+    public static void fetchOptionsWithPrompt(Context context, String userMessage,
+                                    String currentSenderName, long currentTimestamp,
+                                    List<top.galqq.utils.MessageContextManager.ChatMessage> contextMessages,
+                                    String customPrompt,
+                                    AiCallback callback) {
+        fetchOptionsInternal(context, userMessage, currentSenderName, currentTimestamp, 
+                            contextMessages, customPrompt, callback, false);
     }
 
     /**
@@ -167,16 +187,20 @@ public class HttpAiClient {
      * @param currentSenderName 当前消息发送人昵称
      * @param currentTimestamp 当前消息时间戳
      * @param contextMessages 历史上下文消息（可为null）
+     * @param customPrompt 自定义提示词内容（如果为null则使用默认）
      * @param callback 回调
      * @param suppressToast 是否抑制Toast提示（重试时使用）
      */
     private static void fetchOptionsInternal(Context context, String userMessage,
                                     String currentSenderName, long currentTimestamp,
                                     List<top.galqq.utils.MessageContextManager.ChatMessage> contextMessages,
+                                    String customPrompt,
                                     AiCallback callback, boolean suppressToast) {
         String apiUrl = ConfigManager.getApiUrl();
         String apiKey = ConfigManager.getApiKey();
-        String sysPrompt = ConfigManager.getSysPrompt();
+        // 使用自定义提示词或默认提示词
+        String sysPrompt = (customPrompt != null && !customPrompt.isEmpty()) 
+                ? customPrompt : ConfigManager.getSysPrompt();
         String model = ConfigManager.getAiModel();
         String provider = ConfigManager.getAiProvider();
         float temperature = ConfigManager.getAiTemperature();

@@ -142,7 +142,7 @@
         <SwitchPreference
             android:key="gal_affinity_enabled"
             android:title="显示好感度"
-            android:summary="在消息发送者头像旁显示好感度数值（基于QQ空间亲密度）"
+            android:summary="在消息发送者头像旁显示好感度数值（基于QQ空间亲密度，测试功能未实现完全适配，可能存在无法完全获取好感度的问题）"
             android:defaultValue="false" />
         
         <ListPreference

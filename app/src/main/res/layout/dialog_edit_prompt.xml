@@ -1,39 +1,114 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
-    android:layout_height="wrap_content"
-    android:orientation="vertical"
-    android:padding="16dp">
+    android:layout_height="wrap_content">
 
-    <TextView
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="提示词名称"
-        android:textSize="14sp"
-        android:textColor="#666666" />
-
-    <EditText
-        android:id="@+id/edit_prompt_name"
+    <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:hint="例如：温柔风格、傲娇风格"
-        android:inputType="text"
-        android:layout_marginBottom="16dp" />
+        android:orientation="vertical"
+        android:padding="16dp">
 
-    <TextView
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="提示词内容"
-        android:textSize="14sp"
-        android:textColor="#666666" />
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="提示词名称"
+            android:textSize="14sp"
+            android:textColor="#666666" />
 
-    <EditText
-        android:id="@+id/edit_prompt_content"
-        android:layout_width="match_parent"
-        android:layout_height="200dp"
-        android:hint="输入系统提示词..."
-        android:inputType="textMultiLine"
-        android:gravity="top"
-        android:scrollbars="vertical" />
+        <EditText
+            android:id="@+id/edit_prompt_name"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="例如：温柔风格、傲娇风格"
+            android:inputType="text"
+            android:layout_marginBottom="16dp" />
 
-</LinearLayout>
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="提示词内容"
+            android:textSize="14sp"
+            android:textColor="#666666" />
+
+        <EditText
+            android:id="@+id/edit_prompt_content"
+            android:layout_width="match_parent"
+            android:layout_height="200dp"
+            android:hint="输入系统提示词..."
+            android:inputType="textMultiLine"
+            android:gravity="top"
+            android:scrollbars="vertical"
+            android:layout_marginBottom="16dp" />
+
+        <!-- 白名单开关和输入框 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:layout_marginBottom="8dp">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="启用白名单 (强制对这些QQ启用)"
+                android:textSize="14sp"
+                android:textColor="#666666" />
+
+            <Switch
+                android:id="@+id/switch_whitelist"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content" />
+        </LinearLayout>
+
+        <EditText
+            android:id="@+id/edit_prompt_whitelist"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="QQ号用逗号分隔，如：123456,789012"
+            android:inputType="text"
+            android:visibility="gone"
+            android:layout_marginBottom="16dp" />
+
+        <!-- 黑名单开关和输入框 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:layout_marginBottom="8dp">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="启用黑名单 (强制对这些QQ禁用)"
+                android:textSize="14sp"
+                android:textColor="#666666" />
+
+            <Switch
+                android:id="@+id/switch_blacklist"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content" />
+        </LinearLayout>
+
+        <EditText
+            android:id="@+id/edit_prompt_blacklist"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="QQ号用逗号分隔，如：123456,789012"
+            android:inputType="text"
+            android:visibility="gone" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="提示：白名单优先于黑名单，有效QQ号为5-11位数字"
+            android:textSize="12sp"
+            android:textColor="#999999"
+            android:layout_marginTop="8dp" />
+
+    </LinearLayout>
+</ScrollView>

@@ -347,9 +347,10 @@ public class MessageInterceptor {
                 AiRateLimitedQueue.Priority.HIGH : 
                 AiRateLimitedQueue.Priority.NORMAL;
             
-            // 【新增】提取当前消息的元数据（发送人昵称和时间戳）
+            // 【新增】提取当前消息的元数据（发送人昵称、时间戳和发送者QQ）
             String currentSenderName = null;
             long currentTimestamp = 0;
+            String senderQQ = null;
             try {
                 // 尝试从msgObj（msgRecord）提取senderName
                 Object remarkNameObj = XposedHelpers.getObjectField(msgObj, "sendRemarkName");
@@ -367,13 +368,36 @@ public class MessageInterceptor {
                 if (msgTimeObj != null) {
                     currentTimestamp = Long.parseLong(String.valueOf(msgTimeObj)) * 1000L; // 秒转毫秒
                 }
+                
+                // 提取发送者QQ号（用于黑白名单过滤）
+                Object senderUinObj = XposedHelpers.getObjectField(msgObj, "senderUin");
+                if (senderUinObj != null) {
+                    senderQQ = String.valueOf(senderUinObj);
+                }
             } catch (Throwable t) {
                 // 提取失败，使用默认值（null和0）
                 XposedBridge.log(TAG + ": Failed to extract current message metadata: " + t.getMessage());
             }
             
-            // 提交到限流队列（带优先级、上下文和当前消息元数据）
+            // 使用 PromptSelector 选择合适的提示词
+            java.util.List<ConfigManager.PromptItem> allPrompts = ConfigManager.getPromptList();
+            ConfigManager.PromptItem selectedPrompt = top.galqq.utils.PromptSelector.getSelectedPrompt(
+                allPrompts, senderQQ, ConfigManager.isAiEnabled());
+            
+            // 如果没有可用的提示词（全部被屏蔽），隐藏选项栏
+            if (selectedPrompt == null) {
+                XposedBridge.log(TAG + ": No available prompt for sender: " + senderQQ + ", hiding option bar");
+                bar.setVisibility(View.GONE);
+                return;
+            }
+            
+            String customPrompt = selectedPrompt.content;
+            XposedBridge.log(TAG + ": Using prompt: " + selectedPrompt.name + " for sender: " + senderQQ);
+            
+            // 提交到限流队列（带优先级、上下文、发送者QQ和自定义提示词）
             // 使用支持重试的回调接口
+            final String finalSenderQQ = senderQQ;
+            final String finalCustomPrompt = customPrompt;
             AiRateLimitedQueue.getInstance(context).submitRequest(
                 context, 
                 msgContent, 
@@ -382,6 +406,8 @@ public class MessageInterceptor {
                 contextMessages, // 传递上下文消息
                 currentSenderName, // 当前消息发送人昵称
                 currentTimestamp, // 当前消息时间戳
+                finalSenderQQ, // 发送者QQ号
+                finalCustomPrompt, // 自定义提示词
                 new HttpAiClient.AiCallbackWithRetry() {
                     @Override
                     public void onSuccess(List<String> options) {
@@ -476,6 +502,7 @@ public class MessageInterceptor {
     }
 
     // 填充选项条并显示（如果有选项的话）
+    // 支持双击引用回复功能
     private static void populateBarAndShow(Context context, LinearLayout bar, List<String> options, Object chatMessage) {
         bar.removeAllViews();
         
@@ -486,6 +513,76 @@ public class MessageInterceptor {
             bar.setVisibility(View.GONE); // 没有选项时隐藏
             return;
         }
+        
+        // 提取消息的引用回复信息
+        long replyMsgId = 0L;
+        long replyMsgSeq = 0L;
+        String replyNick = "";
+        String replyContent = "";
+        
+        try {
+            // 尝试从 chatMessage 中提取 msgId (long 类型)
+            Object msgIdObj = XposedHelpers.getObjectField(chatMessage, "msgId");
+            if (msgIdObj instanceof Long) {
+                replyMsgId = (Long) msgIdObj;
+            } else if (msgIdObj != null) {
+                try {
+                    replyMsgId = Long.parseLong(String.valueOf(msgIdObj));
+                } catch (NumberFormatException ignored) {}
+            }
+            
+            // 尝试提取消息序列号
+            try {
+                Object msgSeqObj = XposedHelpers.getObjectField(chatMessage, "msgSeq");
+                if (msgSeqObj instanceof Long) {
+                    replyMsgSeq = (Long) msgSeqObj;
+                } else if (msgSeqObj instanceof Integer) {
+                    replyMsgSeq = ((Integer) msgSeqObj).longValue();
+                }
+            } catch (Throwable t) {
+                // 尝试其他可能的字段名
+                try {
+                    Object seqObj = XposedHelpers.getObjectField(chatMessage, "seq");
+                    if (seqObj instanceof Long) {
+                        replyMsgSeq = (Long) seqObj;
+                    } else if (seqObj instanceof Integer) {
+                        replyMsgSeq = ((Integer) seqObj).longValue();
+                    }
+                } catch (Throwable ignored) {}
+            }
+            
+            // 提取发送者昵称
+            try {
+                Object remarkNameObj = XposedHelpers.getObjectField(chatMessage, "sendRemarkName");
+                if (remarkNameObj != null && !String.valueOf(remarkNameObj).trim().isEmpty()) {
+                    replyNick = String.valueOf(remarkNameObj);
+                } else {
+                    Object nickNameObj = XposedHelpers.getObjectField(chatMessage, "sendNickName");
+                    if (nickNameObj != null) {
+                        replyNick = String.valueOf(nickNameObj);
+                    }
+                }
+            } catch (Throwable ignored) {}
+            
+            // 提取消息内容
+            try {
+                Object contentObj = XposedHelpers.getObjectField(chatMessage, "msgContent");
+                if (contentObj != null) {
+                    replyContent = replyNick + ":" + String.valueOf(contentObj);
+                }
+            } catch (Throwable ignored) {}
+            
+            XposedBridge.log(TAG + ": 提取引用信息 - msgId=" + replyMsgId + ", seq=" + replyMsgSeq + ", nick=" + replyNick);
+            
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": 提取引用信息失败: " + t.getMessage());
+        }
+        
+        // 保存引用信息供点击事件使用
+        final long finalReplyMsgId = replyMsgId;
+        final long finalReplyMsgSeq = replyMsgSeq;
+        final String finalReplyNick = replyNick;
+        final String finalReplyContent = replyContent;
         
         XposedBridge.log(TAG + ": Adding " + options.size() + " options to bar");
         for (String option : options) {
@@ -511,17 +608,18 @@ public class MessageInterceptor {
             tv.setLayoutParams(lp);
             tv.setGravity(Gravity.CENTER_VERTICAL);
             
-            // 短按：直接发送消息
+            // 单击事件 - 直接发送消息
             tv.setOnClickListener(v -> {
+                XposedBridge.log(TAG + ": 选项被点击: " + option);
                 sendMessage(context, option, chatMessage);
             });
             
-            // 长按：弹出编辑对话框
+            // 长按：弹出编辑对话框（包含引用发送选项）
             tv.setOnLongClickListener(v -> {
                 // 触觉反馈
                 v.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS);
-                // 显示编辑对话框
-                showEditDialog(context, option, chatMessage);
+                // 显示编辑对话框，传递引用信息
+                showEditDialog(context, option, chatMessage, finalReplyMsgId, finalReplyMsgSeq, finalReplyNick, finalReplyContent);
                 return true; // 消费事件，防止触发 onClick
             });
             
@@ -529,7 +627,7 @@ public class MessageInterceptor {
         }
         
         bar.setVisibility(View.VISIBLE); // 有选项时显示
-        XposedBridge.log(TAG + ": Option bar populated and made visible");
+        XposedBridge.log(TAG + ": Option bar populated and made visible (单击=发送, 长按=编辑/引用)");
     }
 
 
@@ -583,6 +681,22 @@ public class MessageInterceptor {
      * @param chatMessage 消息对象（用于发送）
      */
     private static void showEditDialog(Context context, String originalText, Object chatMessage) {
+        // 调用带引用参数的版本，引用信息为空
+        showEditDialog(context, originalText, chatMessage, 0, 0, "", "");
+    }
+    
+    /**
+     * 显示编辑对话框，允许用户修改选项内容后发送（支持引用回复）
+     * @param context 上下文
+     * @param originalText 原始选项文本
+     * @param chatMessage 消息对象（用于发送）
+     * @param replyMsgId 引用消息ID
+     * @param replyMsgSeq 引用消息序列号
+     * @param replyNick 引用消息发送者昵称
+     * @param replyContent 引用消息内容
+     */
+    private static void showEditDialog(Context context, String originalText, Object chatMessage,
+                                       long replyMsgId, long replyMsgSeq, String replyNick, String replyContent) {
         // 创建半透明遮罩层
         android.widget.FrameLayout overlay = new android.widget.FrameLayout(context);
         overlay.setBackgroundColor(Color.parseColor("#80000000")); // 半透明黑色
@@ -668,6 +782,35 @@ public class MessageInterceptor {
         cancelParams.rightMargin = dp2px(context, 12);
         cancelBtn.setLayoutParams(cancelParams);
         buttonContainer.addView(cancelBtn);
+        
+        // 引用发送按钮（始终显示）
+        TextView replyBtn = createDialogButton(context, "引用", false);
+        // 设置引用按钮的特殊样式（浅蓝色背景）
+        android.graphics.drawable.GradientDrawable replyBg = new android.graphics.drawable.GradientDrawable();
+        replyBg.setShape(android.graphics.drawable.GradientDrawable.RECTANGLE);
+        replyBg.setCornerRadius(dp2px(context, 20));
+        replyBg.setColor(Color.parseColor("#E3F2FD"));
+        replyBtn.setBackground(replyBg);
+        replyBtn.setTextColor(Color.parseColor("#1976D2"));
+        
+        replyBtn.setOnClickListener(v -> {
+            String modifiedText = editText.getText().toString().trim();
+            if (!modifiedText.isEmpty()) {
+                XposedBridge.log(TAG + ": 引用发送 - msgId=" + replyMsgId + ", text=" + modifiedText);
+                // 尝试发送引用回复，如果失败会自动回退到普通发送
+                SendMessageHelper.sendReplyMessageNT(context, chatMessage, modifiedText,
+                    replyMsgId, replyMsgSeq, replyNick, replyContent);
+                if (dialogRef[0] != null) dialogRef[0].dismiss();
+            } else {
+                Toast.makeText(context, "内容不能为空", Toast.LENGTH_SHORT).show();
+            }
+        });
+        LinearLayout.LayoutParams replyParams = new LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT
+        );
+        replyParams.rightMargin = dp2px(context, 12);
+        replyBtn.setLayoutParams(replyParams);
+        buttonContainer.addView(replyBtn);
         
         // 发送按钮
         TextView sendBtn = createDialogButton(context, "发送", true);
@@ -964,7 +1107,25 @@ public class MessageInterceptor {
             
             // Check if it's a received message
             int sendType = XposedHelpers.getIntField(msgRecord, "sendType");
-            boolean isSelf = (sendType == 1); // 1=自己发送, 0=收到的消息
+            boolean isSelfBySendType = (sendType == 1); // 1=自己发送, 0=收到的消息
+            
+            // 【修复】同时通过 senderUin 和当前登录用户 UIN 比较来判断是否是自己发送的消息
+            boolean isSelfBySenderUin = false;
+            try {
+                Object senderUinObj = XposedHelpers.getObjectField(msgRecord, "senderUin");
+                String senderUinStr = String.valueOf(senderUinObj);
+                long currentUin = top.galqq.utils.AppRuntimeHelper.getLongAccountUin(context);
+                if (currentUin > 0 && senderUinStr != null && !senderUinStr.isEmpty()) {
+                    // 如果 senderUin 等于当前登录用户的 UIN
+                    isSelfBySenderUin = senderUinStr.equals(String.valueOf(currentUin));
+                }
+            } catch (Throwable t) {
+                // 获取失败时 isSelfBySenderUin 保持 false
+                // XposedBridge.log(TAG + ": [isSelf] Failed to compare senderUin: " + t.getMessage());
+            }
+            
+            // 【宽松验证】sendType == 1 或 senderUin == currentUin，任一条件满足就认为是自己发送的消息
+            boolean isSelf = isSelfBySendType || isSelfBySenderUin;
 
             // Filter out unwanted message types
             int msgType = XposedHelpers.getIntField(msgRecord, "msgType");
@@ -1995,6 +2156,74 @@ public class MessageInterceptor {
             return;
         }
         
+        // 提取消息的引用回复信息
+        long replyMsgId = 0L;
+        long replyMsgSeq = 0L;
+        String replyNick = "";
+        String replyContent = "";
+        
+        try {
+            // 尝试从 msgRecord 中提取 msgId (long 类型)
+            Object msgIdObj = XposedHelpers.getObjectField(msgRecord, "msgId");
+            XposedBridge.log(TAG + ": [WithActions] msgIdObj=" + msgIdObj + " (type=" + (msgIdObj != null ? msgIdObj.getClass().getName() : "null") + ")");
+            if (msgIdObj instanceof Long) {
+                replyMsgId = (Long) msgIdObj;
+            } else if (msgIdObj != null) {
+                try {
+                    replyMsgId = Long.parseLong(String.valueOf(msgIdObj));
+                } catch (NumberFormatException ignored) {}
+            }
+            
+            // 尝试提取消息序列号
+            try {
+                Object msgSeqObj = XposedHelpers.getObjectField(msgRecord, "msgSeq");
+                if (msgSeqObj instanceof Long) {
+                    replyMsgSeq = (Long) msgSeqObj;
+                } else if (msgSeqObj instanceof Integer) {
+                    replyMsgSeq = ((Integer) msgSeqObj).longValue();
+                }
+            } catch (Throwable t) {
+                try {
+                    Object seqObj = XposedHelpers.getObjectField(msgRecord, "seq");
+                    if (seqObj instanceof Long) {
+                        replyMsgSeq = (Long) seqObj;
+                    } else if (seqObj instanceof Integer) {
+                        replyMsgSeq = ((Integer) seqObj).longValue();
+                    }
+                } catch (Throwable ignored) {}
+            }
+            
+            // 提取发送者昵称
+            try {
+                Object remarkNameObj = XposedHelpers.getObjectField(msgRecord, "sendRemarkName");
+                if (remarkNameObj != null && !String.valueOf(remarkNameObj).trim().isEmpty()) {
+                    replyNick = String.valueOf(remarkNameObj);
+                } else {
+                    Object nickNameObj = XposedHelpers.getObjectField(msgRecord, "sendNickName");
+                    if (nickNameObj != null) {
+                        replyNick = String.valueOf(nickNameObj);
+                    }
+                }
+            } catch (Throwable ignored) {}
+            
+            // 提取消息内容
+            String msgContent = getMessageContentNT(msgRecord);
+            if (msgContent != null && !msgContent.isEmpty()) {
+                replyContent = replyNick + ":" + msgContent;
+            }
+            
+            XposedBridge.log(TAG + ": [WithActions] 提取引用信息 - msgId=" + replyMsgId + ", seq=" + replyMsgSeq + ", nick=" + replyNick);
+            
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ": [WithActions] 提取引用信息失败: " + t.getMessage());
+        }
+        
+        // 保存引用信息供点击事件使用
+        final long finalReplyMsgId = replyMsgId;
+        final long finalReplyMsgSeq = replyMsgSeq;
+        final String finalReplyNick = replyNick;
+        final String finalReplyContent = replyContent;
+        
         // 添加选项按钮
         for (String option : options) {
             TextView tv = new TextView(context);
@@ -2022,10 +2251,10 @@ public class MessageInterceptor {
                 sendMessage(context, option, msgRecord);
             });
             
-            // 长按：弹出编辑对话框
+            // 长按：弹出编辑对话框（传递引用信息）
             tv.setOnLongClickListener(v -> {
                 v.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS);
-                showEditDialog(context, option, msgRecord);
+                showEditDialog(context, option, msgRecord, finalReplyMsgId, finalReplyMsgSeq, finalReplyNick, finalReplyContent);
                 return true;
             });
             
@@ -2179,41 +2408,50 @@ public class MessageInterceptor {
 
 
     private static void logMethodCall(XC_MethodHook.MethodHookParam param) {
-        // DEBUG 日志已禁用
-        /*
+        // DEBUG 日志已启用 - 用于分析引用回复发送
         try {
             String methodName = param.method.getName();
             String className = param.thisObject != null ? param.thisObject.getClass().getSimpleName() : "static";
             
-            XposedBridge.log(TAG + ": [DEBUG] " + className + "." + methodName + " called");
-            XposedBridge.log(TAG + ":   Args count: " + param.args.length);
+            //XposedBridge.log(TAG + ": [DEBUG] " + className + "." + methodName + " called");
+            //XposedBridge.log(TAG + ":   Args count: " + param.args.length);
             
             for (int i = 0; i < param.args.length; i++) {
                 Object arg = param.args[i];
                 String type = arg != null ? arg.getClass().getName() : "null";
-                XposedBridge.log(TAG + ":   arg[" + i + "] (" + type + "): " + arg);
+                //XposedBridge.log(TAG + ":   arg[" + i + "] (" + type + "): " + arg);
                 
                 // 如果参数是 List，尝试打印第一个元素的详细信息
                 if (arg instanceof List) {
                     List<?> list = (List<?>) arg;
                     if (!list.isEmpty()) {
-                        Object firstItem = list.get(0);
-                        if (firstItem != null) {
-                            XposedBridge.log(TAG + ":     List[0] class: " + firstItem.getClass().getName());
-                            // 反射打印字段
-                            try {
-                                for (Field f : firstItem.getClass().getDeclaredFields()) {
-                                    f.setAccessible(true);
-                                    Object val = f.get(firstItem);
-                                    String fieldType = f.getType().getName();
-                                    XposedBridge.log(TAG + ":       Field '" + f.getName() + "' (" + fieldType + "): " + val);
-                                    
-                                    if (val != null && val.getClass().getName().contains("AIOElementType")) {
-                                         XposedBridge.log(TAG + ":         -> Found potential element wrapper: " + val.getClass().getName());
+                        for (int j = 0; j < list.size(); j++) {
+                            Object item = list.get(j);
+                            if (item != null) {
+                                //XposedBridge.log(TAG + ":     List[" + j + "] class: " + item.getClass().getName());
+                                // 反射打印字段
+                                try {
+                                    for (Field f : item.getClass().getDeclaredFields()) {
+                                        f.setAccessible(true);
+                                        Object val = f.get(item);
+                                        String fieldType = f.getType().getName();
+                                        //XposedBridge.log(TAG + ":       Field '" + f.getName() + "' (" + fieldType + "): " + val);
+                                        
+                                        // 深入分析 AIOElementType 相关对象
+                                        if (val != null && val.getClass().getName().contains("AIOElementType")) {
+                                            //XposedBridge.log(TAG + ":         -> Found AIOElementType: " + val.getClass().getName());
+                                            analyzeAIOElementType(val);
+                                        }
+                                        
+                                        // 深入分析可能的 ReplyElement
+                                        if (val != null && (fieldType.contains("Reply") || f.getName().equals("h"))) {
+                                            //XposedBridge.log(TAG + ":         -> Potential ReplyElement found!");
+                                            analyzeReplyElement(val);
+                                        }
                                     }
+                                } catch (Exception e) {
+                                    //XposedBridge.log(TAG + ":       Error inspecting list item: " + e.getMessage());
                                 }
-                            } catch (Exception e) {
-                                XposedBridge.log(TAG + ":       Error inspecting list item: " + e.getMessage());
                             }
                         }
                     }
@@ -2222,7 +2460,47 @@ public class MessageInterceptor {
         } catch (Throwable t) {
             XposedBridge.log(TAG + ": [DEBUG] Error logging method call: " + t.getMessage());
         }
-        */
-        
+    }
+    
+    /**
+     * 深入分析 AIOElementType 对象的所有字段
+     */
+    private static void analyzeAIOElementType(Object element) {
+        try {
+            //XposedBridge.log(TAG + ":         ┌─ AIOElementType 分析 ─┐");
+            for (Field f : element.getClass().getDeclaredFields()) {
+                f.setAccessible(true);
+                Object val = f.get(element);
+                String fieldType = f.getType().getSimpleName();
+                String valStr = val != null ? val.toString() : "null";
+                if (valStr.length() > 100) valStr = valStr.substring(0, 100) + "...";
+                XposedBridge.log(TAG + ":         │ " + f.getName() + " (" + fieldType + "): " + valStr);
+            }
+           // XposedBridge.log(TAG + ":         └─────────────────────┘");
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ":         分析AIOElementType失败: " + t.getMessage());
+        }
+    }
+    
+    /**
+     * 深入分析 ReplyElement 对象的所有字段
+     * 这对于实现引用回复发送功能至关重要
+     */
+    private static void analyzeReplyElement(Object replyElement) {
+        try {
+            //XposedBridge.log(TAG + ":         ┌─ ReplyElement 分析 ─┐");
+            //XposedBridge.log(TAG + ":         │ Class: " + replyElement.getClass().getName());
+            for (Field f : replyElement.getClass().getDeclaredFields()) {
+                f.setAccessible(true);
+                Object val = f.get(replyElement);
+                String fieldType = f.getType().getSimpleName();
+                String valStr = val != null ? val.toString() : "null";
+                if (valStr.length() > 100) valStr = valStr.substring(0, 100) + "...";
+                XposedBridge.log(TAG + ":         │ " + f.getName() + " (" + fieldType + "): " + valStr);
+            }
+            //XposedBridge.log(TAG + ":         └─────────────────────┘");
+        } catch (Throwable t) {
+            XposedBridge.log(TAG + ":         分析ReplyElement失败: " + t.getMessage());
+        }
     }
 }

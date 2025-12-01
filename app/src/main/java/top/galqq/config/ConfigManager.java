@@ -182,7 +182,15 @@ public class ConfigManager {
             org.json.JSONArray arr = new org.json.JSONArray(json);
             for (int i = 0; i < arr.length(); i++) {
                 org.json.JSONObject obj = arr.getJSONObject(i);
-                list.add(new PromptItem(obj.getString("name"), obj.getString("content")));
+                String name = obj.getString("name");
+                String content = obj.getString("content");
+                // 兼容旧数据：缺少字段时默认为空字符串/true/false
+                String whitelist = obj.optString("whitelist", "");
+                String blacklist = obj.optString("blacklist", "");
+                boolean enabled = obj.optBoolean("enabled", true);
+                boolean whitelistEnabled = obj.optBoolean("whitelistEnabled", false);
+                boolean blacklistEnabled = obj.optBoolean("blacklistEnabled", false);
+                list.add(new PromptItem(name, content, whitelist, blacklist, enabled, whitelistEnabled, blacklistEnabled));
             }
         } catch (Exception e) {
             list.add(new PromptItem("默认提示词", DEFAULT_SYS_PROMPT));
@@ -201,6 +209,11 @@ public class ConfigManager {
                 org.json.JSONObject obj = new org.json.JSONObject();
                 obj.put("name", item.name);
                 obj.put("content", item.content);
+                obj.put("whitelist", item.whitelist != null ? item.whitelist : "");
+                obj.put("blacklist", item.blacklist != null ? item.blacklist : "");
+                obj.put("enabled", item.enabled);
+                obj.put("whitelistEnabled", item.whitelistEnabled);
+                obj.put("blacklistEnabled", item.blacklistEnabled);
                 arr.put(obj);
             }
             getMmkv().encode(KEY_PROMPT_LIST, arr.toString());
@@ -236,10 +249,87 @@ public class ConfigManager {
     public static class PromptItem {
         public String name;
         public String content;
+        public String whitelist;  // 逗号分隔的QQ号，白名单
+        public String blacklist;  // 逗号分隔的QQ号，黑名单
+        public boolean enabled;   // 是否启用，禁用时黑白名单都不触发
+        public boolean whitelistEnabled;  // 白名单功能是否启用
+        public boolean blacklistEnabled;  // 黑名单功能是否启用
         
         public PromptItem(String name, String content) {
+            this(name, content, "", "", true, false, false);
+        }
+        
+        public PromptItem(String name, String content, String whitelist, String blacklist) {
+            this(name, content, whitelist, blacklist, true, false, false);
+        }
+        
+        public PromptItem(String name, String content, String whitelist, String blacklist, boolean enabled) {
+            this(name, content, whitelist, blacklist, enabled, false, false);
+        }
+        
+        public PromptItem(String name, String content, String whitelist, String blacklist, 
+                         boolean enabled, boolean whitelistEnabled, boolean blacklistEnabled) {
             this.name = name;
             this.content = content;
+            this.whitelist = whitelist != null ? whitelist : "";
+            this.blacklist = blacklist != null ? blacklist : "";
+            this.enabled = enabled;
+            this.whitelistEnabled = whitelistEnabled;
+            this.blacklistEnabled = blacklistEnabled;
+        }
+        
+        /**
+         * 检查指定QQ号是否在白名单中
+         * @param qq QQ号
+         * @return true 如果在白名单中且白名单功能启用
+         */
+        public boolean isInWhitelist(String qq) {
+            if (!whitelistEnabled) {
+                return false;
+            }
+            if (qq == null || qq.isEmpty() || whitelist == null || whitelist.isEmpty()) {
+                return false;
+            }
+            java.util.Set<String> validQQs = parseQQList(whitelist);
+            return validQQs.contains(qq.trim());
+        }
+        
+        /**
+         * 检查指定QQ号是否在黑名单中
+         * @param qq QQ号
+         * @return true 如果在黑名单中且黑名单功能启用
+         */
+        public boolean isInBlacklist(String qq) {
+            if (!blacklistEnabled) {
+                return false;
+            }
+            if (qq == null || qq.isEmpty() || blacklist == null || blacklist.isEmpty()) {
+                return false;
+            }
+            java.util.Set<String> validQQs = parseQQList(blacklist);
+            return validQQs.contains(qq.trim());
+        }
+        
+        /**
+         * 解析QQ号列表，过滤无效条目
+         * 有效QQ号：5-11位纯数字
+         * @param list 逗号分隔的QQ号字符串
+         * @return 有效QQ号集合
+         */
+        private java.util.Set<String> parseQQList(String list) {
+            java.util.Set<String> result = new java.util.HashSet<>();
+            if (list == null || list.isEmpty()) {
+                return result;
+            }
+            String[] parts = list.split(",");
+            for (String part : parts) {
+                String trimmed = part.trim();
+                // 有效QQ号：5-11位纯数字
+                if (trimmed.matches("\\d{5,11}")) {
+                    result.add(trimmed);
+                }
+            }
+            return result;
         }
     }
 

@@ -62,6 +62,16 @@ public class GalqqHook implements IXposedHookLoadPackage, IXposedHookZygoteInit 
                         XposedBridge.log(TAG + ": 消息追踪启动失败: " + t.getMessage());
                         XposedBridge.log(t);
                     }
+                    
+                    // 【DEBUG】分析 AIOElementType 子类，用于发现引用回复相关类型
+                    XposedBridge.log(TAG + ": 正在分析 AIOElementType 子类...");
+                    try {
+                        top.galqq.utils.SendMessageHelper.analyzeAIOElementTypes(app.getClassLoader());
+                        XposedBridge.log(TAG + ": AIOElementType 分析完成");
+                    } catch (Throwable t) {
+                        XposedBridge.log(TAG + ": AIOElementType 分析失败: " + t.getMessage());
+                        XposedBridge.log(t);
+                    }
                 }
             });
 
