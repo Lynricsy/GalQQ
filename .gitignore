@@ -15,6 +15,7 @@ gradle-app.setting
 *.swp
 *.swo
 *~
+.kiro/
 
 # Android Studio
 /.idea/caches
